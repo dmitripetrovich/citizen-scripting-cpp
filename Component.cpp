@@ -72,11 +72,13 @@ public:
 class Component : public fwRefCountable
 {
 public:
-    virtual bool Initialize() { return true ; }
-    virtual bool Shutdown() { return true ; }
-    virtual bool DoGameLoad(void*) { return true ; }
-    virtual bool IsA(uint32_t type) { return false; (void)type ; }
-    virtual void* As (uint32_t type) { return nullptr; (void)type ; }
+    virtual bool Initialize() { return true; }
+    virtual void SetCommandLine(int, char*[]) {}
+    virtual bool SetUserData(const std::string&) { return true; }
+    virtual bool Shutdown() { return true; }
+    virtual bool DoGameLoad(void*) { return true; }
+    virtual bool IsA(uint32_t) { return false; }
+    virtual void* As(uint32_t) { return nullptr; }
 };
 
 class ComponentInstance final : public Component, public OMComponent

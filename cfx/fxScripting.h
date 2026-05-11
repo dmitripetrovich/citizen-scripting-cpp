@@ -136,6 +136,13 @@ public:
         m_runtime = fx::OMPtr<IScriptRuntime>(rt);
         m_handler->PushRuntime(rt);
     }
+    PushEnvironment(IScriptRuntimeHandler* handler, IScriptRuntime* rt)
+    {
+        if (!handler || !rt) return;
+        m_handler = fx::OMPtr<IScriptRuntimeHandler>(handler);
+        m_runtime = fx::OMPtr<IScriptRuntime>(rt);
+        m_handler->PushRuntime(rt);
+    }
     ~PushEnvironment()
     {
         if (m_runtime.GetRef() && m_handler.GetRef())

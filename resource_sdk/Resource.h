@@ -48,7 +48,7 @@ using CommandHandler = std::function<void(const std::string& source, const std::
 
 class ResourceContext
 {
-public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name) : m_host(host), m_runtime(runtime), m_name(std::move(name)) {}
+public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(handler) {}
 
     void on(const std::string& event, EventHandler h)
     {
@@ -57,7 +57,7 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
 
         if (first)
         {
-            PushEnvironment env(m_runtime);
+            PushEnvironment env(m_handler, m_runtime);
             fxNativeContext ctx{};
             ctx.nativeIdentifier = HashString("REGISTER_RESOURCE_AS_EVENT_HANDLER");
             ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
@@ -74,13 +74,8 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
     void onCommand(const std::string& command, CommandHandler h)
     {
         m_commandHandlers[command].push_back(std::move(h));
-        PushEnvironment env(m_runtime);
-        fxNativeContext ctx{};
-        ctx.nativeIdentifier = HashString("REGISTER_COMMAND");
-        ctx.arguments[0] = reinterpret_cast<uintptr_t>(command.c_str());
-        ctx.arguments[1] = 0;
-        ctx.numArguments = 2;
-        m_host->InvokeNative(ctx);
+        // TODO: implement IScriptRefRuntime to support REGISTER_COMMAND with function refs
+        fprintf(stderr, "[fx-cpp-sdk] onCommand('%s'): not yet supported (requires function refs)\n", command.c_str());
     }
 
     void trace(const char* fmt, ...)
@@ -91,12 +86,13 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
         vsnprintf(buf, sizeof(buf), fmt, ap);
         va_end(ap);
         m_host->ScriptTrace(buf);
+        fprintf(stderr, "[script:%s] %s", m_name.c_str(), buf);
     }
 
     void emit(const std::string& event, const std::vector<std::string>& rawArgs = {})
     {
         auto payload = fx::msgpack::encodeArgs(rawArgs);
-        PushEnvironment env(m_runtime);
+        PushEnvironment env(m_handler, m_runtime);
         fxNativeContext ctx{};
         ctx.nativeIdentifier = HashString("TRIGGER_EVENT_INTERNAL");
         ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
@@ -109,7 +105,7 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
     void emitNet(const std::string& event, int target, const std::vector<std::string>& rawArgs = {})
     {
         auto payload = fx::msgpack::encodeArgs(rawArgs);
-        PushEnvironment env(m_runtime);
+        PushEnvironment env(m_handler, m_runtime);
         fxNativeContext ctx{};
         ctx.nativeIdentifier = HashString("TRIGGER_CLIENT_EVENT_INTERNAL");
         ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
@@ -147,6 +143,7 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
 private:
     IScriptHost* m_host = nullptr;
     IScriptRuntime* m_runtime = nullptr;
+    IScriptRuntimeHandler* m_handler = nullptr;
     std::string m_name;
     std::unordered_map<std::string, std::vector<EventHandler>>m_eventHandlers;
     std::unordered_map<std::string, std::vector<CommandHandler>>m_commandHandlers;

@@ -114,9 +114,11 @@ result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
 {
     if (!m_host || !scriptFile) return FX_E_INVALIDARG;
     std::string root = GetResourcePath(m_host);
+    if (!root.empty() && root.back() == '/')
+        root.pop_back();
     if (root.empty())
     {
-        fprintf(stderr, "[fivem-cpp-sdk] CppRuntime: could not get resource path for '%s'\n", m_resourceName.c_str());
+        fprintf(stderr, "[fx-cpp-sdk] CppRuntime: could not get resource path for '%s'\n", m_resourceName.c_str());
         return FX_E_INVALIDARG;
     }
 #ifdef _WIN32
@@ -124,7 +126,7 @@ result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
     m_libHandle = LoadLibraryA(fullPath.c_str());
     if (!m_libHandle)
     {
-        fprintf(stderr, "[fivem-cpp-sdk] LoadLibraryA failed for '%s': error %lu\n", fullPath.c_str(), GetLastError());
+        fprintf(stderr, "[fx-cpp-sdk] LoadLibraryA failed for '%s': error %lu\n", fullPath.c_str(), GetLastError());
         return FX_E_INVALIDARG;
     }
     auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(GetProcAddress(static_cast<HMODULE>(m_libHandle), "fxcpp_init"));
@@ -133,18 +135,20 @@ result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
     m_libHandle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!m_libHandle)
     {
-        fprintf(stderr, "[fivem-cpp-sdk] dlopen failed for '%s': %s\n", fullPath.c_str(), dlerror());
+        fprintf(stderr, "[fx-cpp-sdk] dlopen failed for '%s': %s\n", fullPath.c_str(), dlerror());
         return FX_E_INVALIDARG;
     }
     auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(dlsym(m_libHandle, "fxcpp_init"));
 #endif
     if (!initFn)
     {
-        fprintf(stderr, "[fivem-cpp-sdk] '%s' has no fxcpp_init export\n", fullPath.c_str());
+        fprintf(stderr, "[fx-cpp-sdk] '%s' has no fxcpp_init export\n", fullPath.c_str());
         return FX_E_INVALIDARG;
     }
-    m_ctx = new fx::ResourceContext(m_host, this, m_resourceName);
-    fprintf(stderr, "[fivem-cpp-sdk] Loaded C++ resource '%s' from '%s'\n", m_resourceName.c_str(), fullPath.c_str());
+    fx::OMPtr<IScriptRuntimeHandler> runtimeHandler;
+    fx::MakeInterface(&runtimeHandler, CLSID_ScriptRuntimeHandler);
+    m_ctx = new fx::ResourceContext(m_host, this, m_resourceName, runtimeHandler.GetRef());
+    fprintf(stderr, "[fx-cpp-sdk] Loaded C++ resource '%s' from '%s'\n", m_resourceName.c_str(), fullPath.c_str());
     initFn(m_ctx);
     return FX_S_OK;
 }

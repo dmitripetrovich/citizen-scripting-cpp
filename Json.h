@@ -171,7 +171,7 @@ struct Parser
     {
         skipWs();
         if (consume() != c)
-            throw std::runtime_error("fivem-cpp-sdk::json: unexpected character");
+            throw std::runtime_error("fx-cpp-sdk::json: unexpected character");
     }
 
     std::string parseString()
@@ -213,7 +213,7 @@ struct Parser
             }
             else out += c;
         }
-        throw std::runtime_error("fivem-cpp-sdk::json: unterminated string");
+        throw std::runtime_error("fx-cpp-sdk::json: unterminated string");
     }
 
     Value parseValue()
@@ -244,7 +244,7 @@ struct Parser
                 char sep = peek();
                 if (sep == ',') { consume(); }
                 else if (sep == '}') { consume(); break; }
-                else throw std::runtime_error("fivem-cpp-sdk::json: expected , or }");
+                else throw std::runtime_error("fx-cpp-sdk::json: expected , or }");
             }
         }
         else if (c == '[')
@@ -260,7 +260,7 @@ struct Parser
                 char sep = peek();
                 if (sep == ',') { consume(); }
                 else if (sep == ']') { consume(); break; }
-                else throw std::runtime_error("fivem-cpp-sdk::json: expected , or ]");
+                else throw std::runtime_error("fx-cpp-sdk::json: expected , or ]");
             }
         }
         else if (c == 't')
