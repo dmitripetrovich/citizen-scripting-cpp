@@ -83,6 +83,7 @@ public:
 
     IScriptHost* getHost() { return m_host; }
     IScriptRuntime* getRuntime() { return m_runtime; }
+    IScriptRuntimeHandler* getRuntimeHandler() { return m_handler.GetRef(); }
     IScriptHostWithResourceData* getMetadataHost() { return m_metadataHost.GetRef(); }
     const std::string& resourceName() const { return m_name; }
 

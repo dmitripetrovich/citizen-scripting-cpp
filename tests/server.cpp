@@ -82,6 +82,26 @@ FXCPP_RESOURCE
         }
     });
 
+    fx::onCommand("kvp", [](const std::string&, const std::vector<std::string>& args) {
+        if (args.size() >= 2)
+        {
+            fx::setKvp(args[0], args[1]);
+            fx::trace("KVP set: %s = %s\n", args[0].c_str(), args[1].c_str());
+        }
+        else if (args.size() == 1)
+        {
+            std::string val = fx::getKvpString(args[0]);
+            fx::trace("KVP get: %s = %s\n", args[0].c_str(), val.empty() ? "(empty)" : val.c_str());
+        }
+        else
+        {
+            auto keys = fx::findKvp("");
+            fx::trace("All KVP keys (%zu):\n", keys.size());
+            for (const auto& k : keys)
+                fx::trace("  - %s = %s\n", k.c_str(), fx::getKvpString(k).c_str());
+        }
+    });
+
     fx::createThread([players]() -> fx::ScriptTask {
         while (true)
         {
