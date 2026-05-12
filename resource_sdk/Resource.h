@@ -45,6 +45,7 @@ public:
     void createThread(BookmarkHandle handle, std::shared_ptr<void> prevent_destruct = {});
     void resumeBookmarks(uint64_t* bookmarks, int32_t numBookmarks);
     void cleanupBookmarks();
+    void cleanupStateBagHandlers();
 
     // Timers
     int32_t setTimeout(uint32_t ms, std::function<void()> cb);

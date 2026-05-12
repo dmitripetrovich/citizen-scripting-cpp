@@ -109,4 +109,14 @@ inline void ResourceContext::removeStateBagChangeHandler(int32_t cookie)
     }
 }
 
+inline void ResourceContext::cleanupStateBagHandlers()
+{
+    for (auto& [cookie, refIdx] : m_stateBagHandlerRefs)
+    {
+        invokeNative(HashString("REMOVE_STATE_BAG_CHANGE_HANDLER"), static_cast<uintptr_t>(cookie));
+        if (m_removeRef) m_removeRef(refIdx);
+    }
+    m_stateBagHandlerRefs.clear();
+}
+
 }

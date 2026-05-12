@@ -56,7 +56,6 @@ result_t OM_DECL Runtime::Create(IScriptHost* host)
 
 result_t OM_DECL Runtime::Destroy()
 {
-    m_refs.clear();
     if (m_bookmarkHost.GetRef())
     {
         m_bookmarkHost->RemoveBookmarks(static_cast<IScriptTickRuntimeWithBookmarks*>(this));
@@ -67,11 +66,13 @@ result_t OM_DECL Runtime::Destroy()
         {
             fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
             m_ctx->dispatchStop();
+            m_ctx->cleanupStateBagHandlers();
         }
         m_ctx->cleanupBookmarks();
         delete m_ctx;
         m_ctx = nullptr;
     }
+    m_refs.clear();
 #ifndef _WIN32
     if (m_libHandle) { dlclose(m_libHandle); m_libHandle = nullptr; }
 #else
@@ -178,6 +179,7 @@ result_t OM_DECL Runtime::DuplicateRef(int32_t refIdx, int32_t* newRefIdx)
     auto it = m_refs.find(refIdx);
     if (it == m_refs.end()) return FX_E_INVALIDARG;
     *newRefIdx = m_nextRefIdx++;
+    if (m_nextRefIdx <= 0) m_nextRefIdx = 1;
     m_refs[*newRefIdx] = it->second;
     return FX_S_OK;
 }
