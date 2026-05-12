@@ -53,6 +53,7 @@ using ExportHandler = std::function<json::Value(EventArgs)>;
 using StopHandler = std::function<void()>;
 using RemoveRefFn = std::function<void(int32_t)>;
 using ScheduleBookmarkFn = std::function<void(uint64_t, int64_t)>;
+using StateBagChangeHandler = std::function<void(const std::string& bagName, const std::string& key, const json::Value& value, int source, bool replicated)>;
 
 struct BookmarkPromise;
 using BookmarkHandle = std::coroutine_handle<BookmarkPromise>;

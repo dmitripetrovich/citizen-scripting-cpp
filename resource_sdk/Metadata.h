@@ -19,4 +19,51 @@ inline int getNumResourceMetadata(const std::string& key)
     return 0;
 }
 
+inline std::string getCurrentResourceName()
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->getCurrentResourceName();
+    return {};
+}
+
+inline std::string getInvokingResource()
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->getInvokingResource();
+    return {};
+}
+
+inline std::string getResourceState(const std::string& resource)
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->getResourceState(resource);
+    return "unknown";
+}
+
+inline int getNumResources()
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->getNumResources();
+    return 0;
+}
+
+inline std::string getResourceByIndex(int index)
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->getResourceByIndex(index);
+    return {};
+}
+
+inline std::vector<std::string> getResources()
+{
+    std::vector<std::string> result;
+    int num = getNumResources();
+    for (int i = 0; i < num; i++)
+    {
+        std::string name = getResourceByIndex(i);
+        if (!name.empty()) result.push_back(std::move(name));
+    }
+    return result;
+}
+
 }

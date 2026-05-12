@@ -82,6 +82,19 @@ FXCPP_RESOURCE
         }
     });
 
+    fx::addStateBagChangeHandler("", "", [](const std::string& bagName, const std::string& key, const fx::json::Value& value, int source, bool replicated) {
+        fx::trace("[statebags] %s:%s changed (source=%d, replicated=%s)\n", bagName.c_str(), key.c_str(), source, replicated ? "true" : "false");
+    });
+
+    fx::onCommand("resources", [](const std::string&, const std::vector<std::string>&) {
+        fx::trace("Current resource: %s\n", fx::getCurrentResourceName().c_str());
+        auto resources = fx::getResources();
+        fx::trace("--- Resources (%zu) ---\n", resources.size());
+        for (const auto& r : resources)
+            fx::trace("  [%s] %s\n", fx::getResourceState(r).c_str(), r.c_str());
+        fx::trace("----------------------\n");
+    });
+
     fx::onCommand("kvp", [](const std::string&, const std::vector<std::string>& args) {
         if (args.size() >= 2)
         {

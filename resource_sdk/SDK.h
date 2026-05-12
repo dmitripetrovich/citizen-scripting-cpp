@@ -5,7 +5,7 @@
 #include "Interop/Events.h"
 #include "Interop/Exports.h"
 #include "Timers.h"
-#include "StateBag.h"
+#include "Statebags.h"
 #include "Metadata.h"
 #include "Native/Native.h"
 #include "KVP.h"

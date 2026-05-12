@@ -71,4 +71,17 @@ inline std::vector<std::string> getStateBagKeys(const std::string& bagName)
     return {};
 }
 
+inline int32_t addStateBagChangeHandler(const std::string& keyFilter, const std::string& bagFilter, StateBagChangeHandler handler)
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->addStateBagChangeHandler(keyFilter, bagFilter, std::move(handler));
+    return -1;
+}
+
+inline void removeStateBagChangeHandler(int32_t cookie)
+{
+    if (auto* ctx = detail::g_ctx)
+        ctx->removeStateBagChangeHandler(cookie);
+}
+
 }

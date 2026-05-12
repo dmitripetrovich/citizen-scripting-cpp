@@ -72,10 +72,19 @@ public:
     json::Value getGlobalState(const std::string& key);
     bool stateBagHasKey(const std::string& bagName, const std::string& key);
     std::vector<std::string> getStateBagKeys(const std::string& bagName);
+    int32_t addStateBagChangeHandler(const std::string& keyFilter, const std::string& bagFilter, StateBagChangeHandler handler);
+    void removeStateBagChangeHandler(int32_t cookie);
 
     // Metadata
     std::string getResourceMetadata(const std::string& key, int index = 0);
     int getNumResourceMetadata(const std::string& key);
+
+    // Resource introspection
+    std::string getCurrentResourceName();
+    std::string getInvokingResource();
+    std::string getResourceState(const std::string& resource);
+    int getNumResources();
+    std::string getResourceByIndex(int index);
 
     void dispatchTick();
     void dispatchEvent(const std::string& name, const json::Value& args, const std::string& source);
@@ -134,6 +143,7 @@ private:
     std::vector<StopHandler> m_stopHandlers;
     std::unordered_map<uint64_t, std::pair<BookmarkHandle, std::shared_ptr<void>>> m_bookmarks;
     uint64_t m_nextBookmarkId = 1;
+    std::unordered_map<int32_t, int32_t> m_stateBagHandlerRefs; // cookie -> refIdx
 };
 
 namespace detail { inline ResourceContext* g_ctx = nullptr; }
