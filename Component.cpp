@@ -1,4 +1,4 @@
-#include "CppRuntime.h"
+#include "Runtime.h"
 
 #include <vector>
 
@@ -53,14 +53,15 @@ struct OMImplementsDef
 OMImplementsDef* OMImplementsDef::s_impls = nullptr;
 
 static OMFactoryDef s_factory{
-    CLSID_CppRuntime,
-    []() -> fxIBase* { return fx::MakeNewBase<CppRuntime>(); }
+    CLSID_Runtime,
+    []() -> fxIBase* { return fx::MakeNewBase<Runtime>(); }
 };
 
-static OMImplementsDef s_implFile { CLSID_CppRuntime, IScriptFileHandlingRuntime::GetIID() };
-static OMImplementsDef s_implRuntime{ CLSID_CppRuntime, IScriptRuntime::GetIID() };
-static OMImplementsDef s_implTick { CLSID_CppRuntime, IScriptTickRuntime::GetIID() };
-static OMImplementsDef s_implEvent { CLSID_CppRuntime, IScriptEventRuntime::GetIID() };
+static OMImplementsDef s_implFile { CLSID_Runtime, IScriptFileHandlingRuntime::GetIID() };
+static OMImplementsDef s_implRuntime{ CLSID_Runtime, IScriptRuntime::GetIID() };
+static OMImplementsDef s_implTick { CLSID_Runtime, IScriptTickRuntime::GetIID() };
+static OMImplementsDef s_implEvent { CLSID_Runtime, IScriptEventRuntime::GetIID() };
+static OMImplementsDef s_implRef { CLSID_Runtime, IScriptRefRuntime::GetIID() };
 
 class OMComponent
 {

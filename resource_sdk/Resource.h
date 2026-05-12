@@ -45,10 +45,12 @@ template<> inline bool EventArgs::get<bool>(size_t i) const { return boolean(i);
 using EventHandler = std::function<void(const std::string& source, EventArgs)>;
 using TickHandler = std::function<void()>;
 using CommandHandler = std::function<void(const std::string& source, const std::vector<std::string>& args)>;
+using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
+using AddRefFn = std::function<int32_t(RefCallback)>;
 
 class ResourceContext
 {
-public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(handler) {}
+public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr, AddRefFn addRefFn = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(handler), m_addRef(std::move(addRefFn)) {}
 
     void on(const std::string& event, EventHandler h)
     {
@@ -74,8 +76,37 @@ public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string 
     void onCommand(const std::string& command, CommandHandler h)
     {
         m_commandHandlers[command].push_back(std::move(h));
-        // TODO: implement IScriptRefRuntime to support REGISTER_COMMAND with function refs
-        fprintf(stderr, "[fx-cpp-sdk] onCommand('%s'): not yet supported (requires function refs)\n", command.c_str());
+        if (!m_addRef)
+        {
+            fprintf(stderr, "[fx-cpp-sdk] onCommand('%s'): no ref support available\n", command.c_str());
+            return;
+        }
+
+        int32_t refIdx = m_addRef([this, command](const char* argsSerialized, uint32_t argsSize) -> std::vector<char> {
+            fx::json::Value args = fx::msgpack::decode(argsSerialized, argsSize);
+            if (args.kind != fx::json::Value::Kind::Array) return {};
+            std::string source = args.size() > 0 ? std::to_string(args.at(0).asInt()) : "0";
+            std::vector<std::string> cmdArgs;
+            if (args.size() > 1 && args.at(1).kind == fx::json::Value::Kind::Array)
+                for (size_t i = 0; i < args.at(1).size(); ++i)
+                    cmdArgs.push_back(args.at(1).at(i).asStr());
+            dispatchCommand(command, source, cmdArgs);
+            return { static_cast<char>(0xC0) };
+        });
+
+        char* refString = nullptr;
+        m_host->CanonicalizeRef(refIdx, m_runtime->GetInstanceId(), &refString);
+        if (!refString) return;
+
+        PushEnvironment env(m_handler, m_runtime);
+        fxNativeContext ctx{};
+        ctx.nativeIdentifier = HashString("REGISTER_COMMAND");
+        ctx.arguments[0] = reinterpret_cast<uintptr_t>(command.c_str());
+        ctx.arguments[1] = reinterpret_cast<uintptr_t>(refString);
+        ctx.arguments[2] = 0;
+        ctx.numArguments = 3;
+        m_host->InvokeNative(ctx);
+        fwFree(refString);
     }
 
     void trace(const char* fmt, ...)
@@ -144,6 +175,7 @@ private:
     IScriptHost* m_host = nullptr;
     IScriptRuntime* m_runtime = nullptr;
     IScriptRuntimeHandler* m_handler = nullptr;
+    AddRefFn m_addRef;
     std::string m_name;
     std::unordered_map<std::string, std::vector<EventHandler>>m_eventHandlers;
     std::unordered_map<std::string, std::vector<CommandHandler>>m_commandHandlers;

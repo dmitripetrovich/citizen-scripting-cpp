@@ -12,6 +12,7 @@ FX_DEFINE_GUID(IID_IScriptRuntime, 0x67B28AF1, 0xAAF9, 0x4368, 0x82, 0x96, 0xF9,
 FX_DEFINE_GUID(IID_IScriptRuntimeHandler, 0x4720A986, 0xEAA6, 0x4ECC, 0xA3, 0x1F, 0x2C, 0xE2, 0xBB, 0xF5, 0x69, 0xF7);
 FX_DEFINE_GUID(IID_IScriptTickRuntime, 0x91B203C7, 0xF95A, 0x4902, 0xB4, 0x63, 0x72, 0x2D, 0x55, 0x09, 0x83, 0x66);
 FX_DEFINE_GUID(IID_IScriptEventRuntime, 0x637140DB, 0x24E5, 0x46BF, 0xA8, 0xBD, 0x08, 0xF2, 0xDB, 0xAC, 0x51, 0x9A);
+FX_DEFINE_GUID(IID_IScriptRefRuntime, 0xA2F1B24B, 0xA29F, 0x4121, 0x81, 0x62, 0x86, 0x90, 0x1E, 0xCA, 0x80, 0x97);
 FX_DEFINE_GUID(IID_IScriptFileHandlingRuntime, 0x567634C6, 0x3BDD, 0x4D0E, 0xAF, 0x39, 0x74, 0x72, 0xAE, 0xD4, 0x79, 0xB7);
 FX_DEFINE_GUID(CLSID_ScriptRuntimeHandler, 0xC41E7194, 0x7556, 0x4C02, 0xBA, 0x45, 0xA9, 0xC8, 0x4D, 0x18, 0xAD, 0x43);
 
@@ -105,12 +106,31 @@ public:
     NS_IMETHOD TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId) = 0;
 };
 
+class IScriptRefRuntime : public fxIBase
+{
+public:
+    NS_DECLARE_STATIC_IID_ACCESSOR(IID_IScriptRefRuntime)
+    NS_IMETHOD CallRef(int32_t refIdx, char* argsSerialized, uint32_t argsSize, IScriptBuffer** retval) = 0;
+    NS_IMETHOD DuplicateRef(int32_t refIdx, int32_t* newRefIdx) = 0;
+    NS_IMETHOD RemoveRef(int32_t refIdx) = 0;
+};
+
 class IScriptFileHandlingRuntime : public fxIBase
 {
 public:
     NS_DECLARE_STATIC_IID_ACCESSOR(IID_IScriptFileHandlingRuntime)
     NS_IMETHOD_(int32_t) HandlesFile(char* scriptFile, IScriptHostWithResourceData* metadata) = 0;
     NS_IMETHOD LoadFile(char* scriptFile) = 0;
+};
+
+class ScriptBuffer final : public fx::OMClass<ScriptBuffer, IScriptBuffer>
+{
+    std::vector<char> m_data;
+public:
+    ScriptBuffer() = default;
+    explicit ScriptBuffer(std::vector<char> data) : m_data(std::move(data)) {}
+    char* OM_DECL GetBytes() override { return m_data.data(); }
+    uint32_t OM_DECL GetLength() override { return static_cast<uint32_t>(m_data.size()); }
 };
 
 namespace fx

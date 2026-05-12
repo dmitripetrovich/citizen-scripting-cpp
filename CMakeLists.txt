@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(fx-cpp-sdk LANGUAGES CXX)
 
 add_library(fx-cpp-runtime SHARED
-    CppRuntime.cpp
+    Runtime.cpp
     Component.cpp
 )
 target_include_directories(fx-cpp-runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

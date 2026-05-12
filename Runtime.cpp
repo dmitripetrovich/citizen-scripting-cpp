@@ -1,4 +1,4 @@
-#include "CppRuntime.h"
+#include "Runtime.h"
 
 #include <cstdio>
 #include <cstring>
@@ -36,15 +36,15 @@ static bool EndsWith(std::string_view s, std::string_view suffix)
     return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-CppRuntime::CppRuntime() : m_instanceId(static_cast<int32_t>(reinterpret_cast<intptr_t>(this) & 0x7FFFFFFF))
+Runtime::Runtime() : m_instanceId(static_cast<int32_t>(reinterpret_cast<intptr_t>(this) & 0x7FFFFFFF))
 {}
 
-CppRuntime::~CppRuntime()
+Runtime::~Runtime()
 {
     Destroy();
 }
 
-result_t OM_DECL CppRuntime::Create(IScriptHost* host)
+result_t OM_DECL Runtime::Create(IScriptHost* host)
 {
     m_host = host;
     fx::OMPtr<IScriptHostWithResourceData> md;
@@ -58,8 +58,9 @@ result_t OM_DECL CppRuntime::Create(IScriptHost* host)
     return FX_S_OK;
 }
 
-result_t OM_DECL CppRuntime::Destroy()
+result_t OM_DECL Runtime::Destroy()
 {
+    m_refs.clear();
     delete m_ctx;
     m_ctx = nullptr;
 #ifndef _WIN32
@@ -71,19 +72,19 @@ result_t OM_DECL CppRuntime::Destroy()
     return FX_S_OK;
 }
 
-void OM_DECL CppRuntime::SetParentObject(void* obj)
+void OM_DECL Runtime::SetParentObject(void* obj)
 {
     m_parentObject = obj;
 }
 
-result_t OM_DECL CppRuntime::Tick()
+result_t OM_DECL Runtime::Tick()
 {
     if (m_ctx)
         m_ctx->dispatchTick();
     return FX_S_OK;
 }
 
-result_t OM_DECL CppRuntime::TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId)
+result_t OM_DECL Runtime::TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId)
 {
     if (!m_ctx || !eventName) return FX_S_OK;
     fx::json::Value args = fx::msgpack::decode(argsSerialized, serializedSize);
@@ -99,7 +100,38 @@ result_t OM_DECL CppRuntime::TriggerEvent(char* eventName, char* argsSerialized,
     return FX_S_OK;
 }
 
-int32_t OM_DECL CppRuntime::HandlesFile(char* scriptFile, IScriptHostWithResourceData* /*metadata*/)
+int32_t Runtime::AddFuncRef(RefCallback cb)
+{
+    int32_t idx = m_nextRefIdx++;
+    m_refs[idx] = std::move(cb);
+    return idx;
+}
+
+result_t OM_DECL Runtime::CallRef(int32_t refIdx, char* argsSerialized, uint32_t argsSize, IScriptBuffer** retval)
+{
+    auto it = m_refs.find(refIdx);
+    if (it == m_refs.end()) return FX_E_INVALIDARG;
+    std::vector<char> result = it->second(argsSerialized, argsSize);
+    auto buf = fx::MakeNew<ScriptBuffer>(std::move(result));
+    return buf->QueryInterface(IScriptBuffer::GetIID(), reinterpret_cast<void**>(retval));
+}
+
+result_t OM_DECL Runtime::DuplicateRef(int32_t refIdx, int32_t* newRefIdx)
+{
+    auto it = m_refs.find(refIdx);
+    if (it == m_refs.end()) return FX_E_INVALIDARG;
+    *newRefIdx = m_nextRefIdx++;
+    m_refs[*newRefIdx] = it->second;
+    return FX_S_OK;
+}
+
+result_t OM_DECL Runtime::RemoveRef(int32_t refIdx)
+{
+    m_refs.erase(refIdx);
+    return FX_S_OK;
+}
+
+int32_t OM_DECL Runtime::HandlesFile(char* scriptFile, IScriptHostWithResourceData* /*metadata*/)
 {
     if (!scriptFile) return 0;
     std::string_view file(scriptFile);
@@ -110,7 +142,7 @@ int32_t OM_DECL CppRuntime::HandlesFile(char* scriptFile, IScriptHostWithResourc
 #endif
 }
 
-result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
+result_t OM_DECL Runtime::LoadFile(char* scriptFile)
 {
     if (!m_host || !scriptFile) return FX_E_INVALIDARG;
     std::string root = GetResourcePath(m_host);
@@ -118,7 +150,7 @@ result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
         root.pop_back();
     if (root.empty())
     {
-        fprintf(stderr, "[fx-cpp-sdk] CppRuntime: could not get resource path for '%s'\n", m_resourceName.c_str());
+        fprintf(stderr, "[fx-cpp-sdk] Runtime: could not get resource path for '%s'\n", m_resourceName.c_str());
         return FX_E_INVALIDARG;
     }
 #ifdef _WIN32
@@ -147,8 +179,8 @@ result_t OM_DECL CppRuntime::LoadFile(char* scriptFile)
     }
     fx::OMPtr<IScriptRuntimeHandler> runtimeHandler;
     fx::MakeInterface(&runtimeHandler, CLSID_ScriptRuntimeHandler);
-    m_ctx = new fx::ResourceContext(m_host, this, m_resourceName, runtimeHandler.GetRef());
-    fprintf(stderr, "[fx-cpp-sdk] Loaded C++ resource '%s' from '%s'\n", m_resourceName.c_str(), fullPath.c_str());
+    m_ctx = new fx::ResourceContext(m_host, this, m_resourceName, runtimeHandler.GetRef(), [this](RefCallback cb) -> int32_t { return AddFuncRef(std::move(cb)); });
+    fprintf(stderr, "[fx-cpp-sdk] Loaded C++ resource '%s'\n", m_resourceName.c_str());
     initFn(m_ctx);
     return FX_S_OK;
 }

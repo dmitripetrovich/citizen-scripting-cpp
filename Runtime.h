@@ -8,14 +8,18 @@
 #include <string>
 #include <atomic>
 #include <cstdlib>
+#include <unordered_map>
+#include <functional>
 
-FX_DEFINE_GUID(CLSID_CppRuntime, 0xF3A7B9, 0x241D, 0x5E4C, 0x8A, 0x93, 0x2F, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5);
+FX_DEFINE_GUID(CLSID_Runtime, 0xF3A7B9, 0x241D, 0x5E4C, 0x8A, 0x93, 0x2F, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5);
 
-class CppRuntime final : public fx::OMClass<CppRuntime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptFileHandlingRuntime>
+using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
+
+class Runtime final : public fx::OMClass<Runtime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime>
 {
 public:
-    CppRuntime();
-    ~CppRuntime();
+    Runtime();
+    ~Runtime();
     result_t OM_DECL Create (IScriptHost* host) override;
     result_t OM_DECL Destroy() override;
     void* OM_DECL GetParentObject() override { return m_parentObject; }
@@ -23,8 +27,12 @@ public:
     int32_t OM_DECL GetInstanceId() override { return m_instanceId; }
     result_t OM_DECL Tick() override;
     result_t OM_DECL TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId) override;
+    result_t OM_DECL CallRef(int32_t refIdx, char* argsSerialized, uint32_t argsSize, IScriptBuffer** retval) override;
+    result_t OM_DECL DuplicateRef(int32_t refIdx, int32_t* newRefIdx) override;
+    result_t OM_DECL RemoveRef(int32_t refIdx) override;
     int32_t OM_DECL HandlesFile(char* scriptFile, IScriptHostWithResourceData* metadata) override;
     result_t OM_DECL LoadFile(char* scriptFile) override;
+    int32_t AddFuncRef(RefCallback cb);
 
 private:
     IScriptHost* m_host = nullptr;
@@ -33,4 +41,6 @@ private:
     void* m_libHandle = nullptr;
     fx::ResourceContext* m_ctx = nullptr;
     std::string m_resourceName;
+    std::unordered_map<int32_t, RefCallback> m_refs;
+    int32_t m_nextRefIdx = 1;
 };
