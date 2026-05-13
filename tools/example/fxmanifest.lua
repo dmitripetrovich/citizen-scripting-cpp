@@ -6,7 +6,4 @@ author 'bd53'
 description 'Test C++ resource.'
 version '1.0.0'
 
-server_scripts {
-    'server.so',
-    'server.lua',
-}
+server_script 'server.so'

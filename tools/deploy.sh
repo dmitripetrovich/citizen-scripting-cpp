@@ -13,10 +13,9 @@ make -C "$BUILD_DIR" config=release \
     CXX="zig c++ -target x86_64-linux-musl" \
     -j"$(nproc)"
 
+mkdir -p "$RESOURCE_DIR"
 cp "$BUILD_DIR/bin/Release/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
 cp "$BUILD_DIR/bin/Release/server.so" "$RESOURCE_DIR/"
-cp "$PROJECT_DIR/tests/fxmanifest.lua" "$RESOURCE_DIR/"
-cp "$PROJECT_DIR/tests/server.cpp" "$RESOURCE_DIR/"
-cp "$PROJECT_DIR/tests/server.lua" "$RESOURCE_DIR/"
+cp -a "$PROJECT_DIR/tools/example/." "$RESOURCE_DIR/"
 
 echo "Deployed to $SERVER_DIR and $RESOURCE_DIR"

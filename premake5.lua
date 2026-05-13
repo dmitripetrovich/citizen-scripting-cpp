@@ -27,7 +27,7 @@ project "test-runtime"
     targetname "server"
     targetprefix ""
     files {
-        "tests/server.cpp",
+        "tools/example/server.cpp",
     }
     includedirs { "." }
     defines { "FXCPP_RUNTIME" }
