@@ -8,9 +8,16 @@
 
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <cxxabi.h>
+#if __has_include(<execinfo.h>)
+#include <execinfo.h>
+#define HAS_EXECINFO 1
+#endif
 #else
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 #endif
 
 static std::string GetResourcePath(IScriptHost* host)
@@ -43,14 +50,15 @@ Runtime::~Runtime()
 result_t OM_DECL Runtime::Create(IScriptHost* host)
 {
     m_host = host;
-    fx::OMPtr<IScriptHostWithResourceData> md;
     fx::OMPtr<IScriptHost> h(host);
+    fx::OMPtr<IScriptHostWithResourceData> md;
     if (FX_SUCCEEDED(h.As(&md)) && md.GetRef())
     {
         char* name = nullptr;
         if (FX_SUCCEEDED(md->GetResourceName(&name)) && name)
             m_resourceName = name;
     }
+    h.As(&m_manifestHost);
     return FX_S_OK;
 }
 
@@ -89,7 +97,7 @@ void OM_DECL Runtime::SetParentObject(void* obj)
 
 result_t OM_DECL Runtime::Tick()
 {
-    if (!m_ctx) return FX_S_OK;
+    if (!m_ctx || !m_ctx->hasPendingWork()) return FX_S_OK;
     fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
     BoundaryGuard boundary(m_host, m_nextBoundaryId++);
     try
@@ -190,17 +198,89 @@ result_t OM_DECL Runtime::RemoveRef(int32_t refIdx)
     return FX_S_OK;
 }
 
+static void SubmitFrame(IScriptStackWalkVisitor* visitor, const std::string& resource, const std::string& func, const std::string& file, int line)
+{
+    fx::json::Value frame;
+    frame.kind = fx::json::Value::Kind::Array;
+    frame.children.push_back(fx::json::makeString(resource));
+    frame.children.push_back(fx::json::makeString(func));
+    frame.children.push_back(fx::json::makeString(file));
+    frame.children.push_back(fx::json::makeInt(line));
+    auto encoded = fx::msgpack::encode(frame);
+    visitor->SubmitStackFrame(reinterpret_cast<char*>(encoded.data()), static_cast<uint32_t>(encoded.size()));
+}
+
 result_t OM_DECL Runtime::WalkStack(char* boundaryStart, uint32_t boundaryStartLength, char* boundaryEnd, uint32_t boundaryEndLength, IScriptStackWalkVisitor* visitor)
 {
     if (!visitor) return FX_S_OK;
-    fx::json::Value frame;
-    frame.kind = fx::json::Value::Kind::Array;
-    frame.children.push_back(fx::json::makeString(m_resourceName));
-    frame.children.push_back(fx::json::makeString("native"));
-    frame.children.push_back(fx::json::makeString(""));
-    frame.children.push_back(fx::json::makeInt(0));
-    auto encoded = fx::msgpack::encode(frame);
-    visitor->SubmitStackFrame(reinterpret_cast<char*>(encoded.data()), static_cast<uint32_t>(encoded.size()));
+
+    bool submitted = false;
+
+#if defined(HAS_EXECINFO)
+    void* frames[64];
+    int count = backtrace(frames, 64);
+
+    for (int i = 0; i < count; ++i)
+    {
+        Dl_info info{};
+        if (!dladdr(frames[i], &info) || !info.dli_sname)
+            continue;
+
+        if (!info.dli_fname || m_libPath.empty() || m_libPath != info.dli_fname)
+            continue;
+
+        std::string funcName;
+        int status = 0;
+        char* demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
+        if (status == 0 && demangled)
+        {
+            funcName = demangled;
+            free(demangled);
+        }
+        else
+        {
+            funcName = info.dli_sname;
+        }
+
+        SubmitFrame(visitor, m_resourceName, funcName, info.dli_fname, 0);
+        submitted = true;
+    }
+#elif defined(_WIN32)
+    void* frames[64];
+    USHORT count = CaptureStackBackTrace(0, 64, frames, nullptr);
+
+    static bool symInit = false;
+    if (!symInit)
+    {
+        SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+        symInit = true;
+    }
+
+    HMODULE libMod = static_cast<HMODULE>(m_libHandle);
+    for (USHORT i = 0; i < count; ++i)
+    {
+        HMODULE mod = nullptr;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(frames[i]), &mod);
+        if (mod != libMod)
+            continue;
+
+        alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 256];
+        auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 256;
+
+        std::string funcName = "unknown";
+        if (SymFromAddr(GetCurrentProcess(), reinterpret_cast<DWORD64>(frames[i]), nullptr, sym))
+            funcName = sym->Name;
+
+        SubmitFrame(visitor, m_resourceName, funcName, m_libPath, 0);
+        submitted = true;
+    }
+#endif
+
+    if (!submitted)
+        SubmitFrame(visitor, m_resourceName, "native", "", 0);
+
     return FX_S_OK;
 }
 
@@ -212,7 +292,7 @@ result_t OM_DECL Runtime::RequestMemoryUsage()
 result_t OM_DECL Runtime::GetMemoryUsage(int64_t* memUsage)
 {
     if (!memUsage) return FX_E_INVALIDARG;
-    *memUsage = 0;
+    *memUsage = m_ctx ? m_ctx->getMemoryUsage() : 0;
     return FX_S_OK;
 }
 
@@ -224,6 +304,18 @@ result_t OM_DECL Runtime::EmitWarning(char* channel, char* message)
         m_ctx->trace("[warning:%s] %s\n", ch, message);
     }
     return FX_S_OK;
+}
+
+void OM_DECL Runtime::SetupFxProfiler(void* obj, int32_t resourceId)
+{
+    m_profiler = obj;
+    m_profilerId = resourceId;
+}
+
+void OM_DECL Runtime::ShutdownFxProfiler()
+{
+    m_profiler = nullptr;
+    m_profilerId = 0;
 }
 
 int32_t OM_DECL Runtime::HandlesFile(char* scriptFile, IScriptHostWithResourceData* /*metadata*/)
@@ -254,6 +346,15 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
         fprintf(stderr, "[citizen-scripting-cpp] Rejected script path with '..': '%s'\n", scriptFile);
         return FX_E_INVALIDARG;
     }
+    {
+        fx::OMPtr<fxIStream> stream;
+        if (FX_FAILED(m_host->OpenHostFile(scriptFile, stream.GetAddressOf())) || !stream.GetRef())
+        {
+            fprintf(stderr, "[citizen-scripting-cpp] Host denied access to '%s' in resource '%s'\n", scriptFile, m_resourceName.c_str());
+            return FX_E_INVALIDARG;
+        }
+    }
+
 #ifdef _WIN32
     std::string fullPath = root + "\\" + scriptFile;
     m_libHandle = LoadLibraryA(fullPath.c_str());
@@ -273,6 +374,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     }
     auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(dlsym(m_libHandle, "fxcpp_init"));
 #endif
+    m_libPath = fullPath;
     if (!initFn)
     {
         fprintf(stderr, "[citizen-scripting-cpp] '%s' has no fxcpp_init export\n", fullPath.c_str());

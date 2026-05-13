@@ -19,6 +19,20 @@ inline int getNumResourceMetadata(const std::string& key)
     return 0;
 }
 
+inline bool isManifestVersionBetween(const guid_t& lower, const guid_t& upper)
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->isManifestVersionBetween(lower, upper);
+    return false;
+}
+
+inline bool isManifestVersionV2Between(const std::string& lower, const std::string& upper)
+{
+    if (auto* ctx = detail::g_ctx)
+        return ctx->isManifestVersionV2Between(lower, upper);
+    return false;
+}
+
 inline std::string getCurrentResourceName()
 {
     if (auto* ctx = detail::g_ctx)

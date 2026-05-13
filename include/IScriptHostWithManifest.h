@@ -8,6 +8,6 @@ class IScriptHostWithManifest : public fxIBase
 {
 public:
     NS_DECLARE_STATIC_IID_ACCESSOR(IID_IScriptHostWithManifest)
-    NS_IMETHOD_(bool) IsManifestVersionBetween (const guid_t& lower, const guid_t& upper) = 0;
-    NS_IMETHOD_(bool) IsManifestVersionV2Between(char* lower, char* upper) = 0;
+    NS_IMETHOD IsManifestVersionBetween (const guid_t& lower, const guid_t& upper, bool* retval) = 0;
+    NS_IMETHOD IsManifestVersionV2Between(char* lower, char* upper, bool* retval) = 0;
 };

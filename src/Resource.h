@@ -5,6 +5,7 @@
 #include "Interop/MsgPackDeserializer.h"
 #include "../include/fxScripting.h"
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +13,10 @@
 #include <unordered_set>
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
+#ifndef _WIN32
+#include <malloc.h>
+#endif
 
 #if defined(_WIN32)
 #define FXCPP_RESOURCE_EXPORT __declspec(dllexport)
@@ -29,6 +34,7 @@ public:
     {
         fx::OMPtr<IScriptHost> h(host);
         h.As(&m_metadataHost);
+        h.As(&m_manifestHost);
     }
 
     // Events
@@ -80,6 +86,10 @@ public:
     std::string getResourceMetadata(const std::string& key, int index = 0);
     int getNumResourceMetadata(const std::string& key);
 
+    // Manifest version
+    bool isManifestVersionBetween(const guid_t& lower, const guid_t& upper);
+    bool isManifestVersionV2Between(const std::string& lower, const std::string& upper);
+
     // Resource introspection
     std::string getCurrentResourceName();
     std::string getInvokingResource();
@@ -87,6 +97,9 @@ public:
     int getNumResources();
     std::string getResourceByIndex(int index);
 
+    bool hasPendingWork() const { return !m_tickHandlers.empty() || !m_timers.empty(); }
+    int64_t getMemoryUsage() const { return m_memoryUsage.load(std::memory_order_relaxed); }
+    void trackAlloc(int64_t bytes) { m_memoryUsage.fetch_add(bytes, std::memory_order_relaxed); }
     void dispatchTick();
     void dispatchEvent(const std::string& name, const json::Value& args, const std::string& source);
     void dispatchCommand(const std::string& command, const std::string& source, const std::vector<std::string>& args);
@@ -98,6 +111,13 @@ public:
     IScriptHostWithResourceData* getMetadataHost() { return m_metadataHost.GetRef(); }
     const std::string& resourceName() const { return m_name; }
 
+    void traceNativeError()
+    {
+        char* err = nullptr;
+        if (FX_SUCCEEDED(m_host->GetLastErrorText(&err)) && err && err[0])
+            trace("Native error: %s\n", err);
+    }
+
     template<typename... Args>
     void invokeNative(uint64_t hash, Args... args)
     {
@@ -107,7 +127,8 @@ public:
         size_t idx = 0;
         ((ctx.arguments[idx++] = static_cast<uintptr_t>(args)), ...);
         ctx.numArguments = static_cast<int>(idx);
-        m_host->InvokeNative(ctx);
+        if (FX_FAILED(m_host->InvokeNative(ctx)))
+            traceNativeError();
     }
 
     template<typename... Args>
@@ -120,7 +141,8 @@ public:
         size_t idx = 0;
         ((ctx.arguments[idx++] = static_cast<uintptr_t>(args)), ...);
         ctx.numArguments = static_cast<int>(idx);
-        m_host->InvokeNative(ctx);
+        if (FX_FAILED(m_host->InvokeNative(ctx)))
+            traceNativeError();
         return ctx;
     }
 
@@ -132,6 +154,7 @@ private:
     RemoveRefFn m_removeRef;
     ScheduleBookmarkFn m_scheduleBookmark;
     fx::OMPtr<IScriptHostWithResourceData> m_metadataHost;
+    fx::OMPtr<IScriptHostWithManifest> m_manifestHost;
     std::string m_name;
     std::unordered_map<std::string, std::vector<EventHandler>> m_eventHandlers;
     std::unordered_map<std::string, std::vector<CommandHandler>> m_commandHandlers;
@@ -143,6 +166,7 @@ private:
     std::unordered_map<uint64_t, std::pair<BookmarkHandle, std::shared_ptr<void>>> m_bookmarks;
     uint64_t m_nextBookmarkId = 1;
     std::unordered_map<int32_t, int32_t> m_stateBagHandlerRefs; // cookie -> refIdx
+    std::atomic<int64_t> m_memoryUsage{0};
 };
 
 namespace detail { inline ResourceContext* g_ctx = nullptr; }
@@ -167,3 +191,43 @@ inline ResourceContext* GetContext() { return detail::g_ctx; }
         _fxcpp_resource_body(*_ctx); \
     } \
     static void _fxcpp_resource_body([[maybe_unused]] fx::ResourceContext& ctx)
+
+#ifdef FXCPP_RUNTIME
+void* operator new(std::size_t size)
+{
+    void* p = std::malloc(size);
+    if (!p) throw std::bad_alloc();
+    if (auto* ctx = fx::detail::g_ctx)
+        ctx->trackAlloc(static_cast<int64_t>(size));
+    return p;
+}
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept
+{
+    void* p = std::malloc(size);
+    if (p)
+        if (auto* ctx = fx::detail::g_ctx)
+            ctx->trackAlloc(static_cast<int64_t>(size));
+    return p;
+}
+
+void operator delete(void* p) noexcept
+{
+    if (p)
+        if (auto* ctx = fx::detail::g_ctx)
+        {
+#if defined(__GLIBC__)
+            ctx->trackAlloc(-static_cast<int64_t>(malloc_usable_size(p)));
+#endif
+        }
+    std::free(p);
+}
+
+void operator delete(void* p, std::size_t size) noexcept
+{
+    if (p)
+        if (auto* ctx = fx::detail::g_ctx)
+            ctx->trackAlloc(-static_cast<int64_t>(size));
+    std::free(p);
+}
+#endif

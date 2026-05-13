@@ -13,11 +13,26 @@ FXCPP_RESOURCE
     auto pending = std::make_shared<std::unordered_map<std::string, std::string>>();
     auto players = std::make_shared<std::unordered_map<std::string, std::string>>();
 
-    std::string version = fx::getResourceMetadata("version");
-    if (!version.empty())
-        fx::trace("Resource version: %s\n", version.c_str());
+    auto meta = [](const std::string& key) { return fx::getResourceMetadata(key); };
 
-    fx::trace("Resource started.\n");
+    if (!meta("fx_version").empty()) fx::trace("Manifest: %s\n", meta("fx_version").c_str());
+    if (!meta("game").empty()) fx::trace("Game: %s\n", meta("game").c_str());
+    fx::trace("Name: %s\n", meta("name").c_str());
+    if (!meta("author").empty()) fx::trace("Author: %s\n", meta("author").c_str());
+    if (!meta("description").empty()) fx::trace("Description: %s\n", meta("description").c_str());
+    if (!meta("version").empty()) fx::trace("Version: %s\n", meta("version").c_str());
+
+    int numScripts = fx::getNumResourceMetadata("server_script");
+    if (numScripts > 0)
+    {
+        std::string scripts = "Scripts: ";
+        for (int i = 0; i < numScripts; i++)
+        {
+            if (i > 0) scripts += ", ";
+            scripts += fx::getResourceMetadata("server_script", i);
+        }
+        fx::trace("%s\n", scripts.c_str());
+    }
 
     fx::onStop([players]() {
         fx::trace("Resource stopping, %zu players tracked.\n", players->size());
@@ -117,6 +132,13 @@ FXCPP_RESOURCE
 
     fx::onCommand("testerror", [](const std::string&, const std::vector<std::string>&) {
         throw std::runtime_error("intentional test error");
+    });
+
+    fx::onCommand("manifest", [](const std::string&, const std::vector<std::string>&) {
+        bool cerulean = fx::isManifestVersionV2Between("cerulean", "");
+        bool bodacious = fx::isManifestVersionV2Between("bodacious", "");
+        bool adamant = fx::isManifestVersionV2Between("adamant", "");
+        fx::trace("Manifest: adamant=%s, bodacious=%s, cerulean=%s\n", adamant ? "yes" : "no", bodacious ? "yes" : "no", cerulean ? "yes" : "no");
     });
 
     fx::createThread([players]() -> fx::ScriptTask {

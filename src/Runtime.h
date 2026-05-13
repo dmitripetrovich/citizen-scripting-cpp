@@ -35,13 +35,13 @@ public:
     ~BoundaryGuard()
     {
         if (m_host)
-            m_host->SubmitBoundaryStart(nullptr, 0);
+            m_host->SubmitBoundaryEnd(nullptr, 0);
     }
     BoundaryGuard(const BoundaryGuard&) = delete;
     BoundaryGuard& operator=(const BoundaryGuard&) = delete;
 };
 
-class Runtime final : public fx::OMClass<Runtime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime, IScriptTickRuntimeWithBookmarks, IScriptStackWalkingRuntime, IScriptMemInfoRuntime, IScriptWarningRuntime>
+class Runtime final : public fx::OMClass<Runtime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime, IScriptTickRuntimeWithBookmarks, IScriptStackWalkingRuntime, IScriptMemInfoRuntime, IScriptWarningRuntime, IScriptProfiler>
 {
 public:
     Runtime();
@@ -63,17 +63,24 @@ public:
     result_t OM_DECL RequestMemoryUsage() override;
     result_t OM_DECL GetMemoryUsage(int64_t* memUsage) override;
     result_t OM_DECL EmitWarning(char* channel, char* message) override;
+    void OM_DECL SetupFxProfiler(void* obj, int32_t resourceId) override;
+    void OM_DECL ShutdownFxProfiler() override;
+    bool IsProfiling() const { return m_profiler != nullptr; }
     int32_t AddFuncRef(RefCallback cb);
 
 private:
     IScriptHost* m_host = nullptr;
     fx::OMPtr<IScriptHostWithBookmarks> m_bookmarkHost;
+    fx::OMPtr<IScriptHostWithManifest> m_manifestHost;
     void* m_parentObject = nullptr;
     int32_t m_instanceId = 0;
     void* m_libHandle = nullptr;
+    std::string m_libPath;
     fx::ResourceContext* m_ctx = nullptr;
     std::string m_resourceName;
     std::unordered_map<int32_t, RefCallback> m_refs;
     int32_t m_nextRefIdx = 1;
     int64_t m_nextBoundaryId = 1;
+    void* m_profiler = nullptr;
+    int32_t m_profilerId = 0;
 };

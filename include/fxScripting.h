@@ -16,3 +16,4 @@
 #include "IScriptStackWalkingRuntime.h"
 #include "IScriptMemInfoRuntime.h"
 #include "IScriptWarningRuntime.h"
+#include "IScriptProfiler.h"

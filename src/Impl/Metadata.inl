@@ -18,6 +18,24 @@ inline int ResourceContext::getNumResourceMetadata(const std::string& key)
     return count;
 }
 
+inline bool ResourceContext::isManifestVersionBetween(const guid_t& lower, const guid_t& upper)
+{
+    if (!m_manifestHost.GetRef()) return false;
+    bool result = false;
+    if (FX_FAILED(m_manifestHost->IsManifestVersionBetween(lower, upper, &result)))
+        return false;
+    return result;
+}
+
+inline bool ResourceContext::isManifestVersionV2Between(const std::string& lower, const std::string& upper)
+{
+    if (!m_manifestHost.GetRef()) return false;
+    bool result = false;
+    if (FX_FAILED(m_manifestHost->IsManifestVersionV2Between(const_cast<char*>(lower.c_str()), const_cast<char*>(upper.c_str()), &result)))
+        return false;
+    return result;
+}
+
 inline std::string ResourceContext::getCurrentResourceName()
 {
     auto ctx = invokeNativeResult(HashString("GET_CURRENT_RESOURCE_NAME"));

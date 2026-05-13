@@ -71,7 +71,8 @@ inline fxNativeContext invokeCtx(uint64_t hash, TArgs&&... args)
     (detail::pushArg(nctx, idx++, std::forward<TArgs>(args)), ...);
     nctx.numArguments = static_cast<int>(idx);
     nctx.numResults = 3;
-    ctx->getHost()->InvokeNative(nctx);
+    if (FX_FAILED(ctx->getHost()->InvokeNative(nctx)))
+        ctx->traceNativeError();
     return nctx;
 }
 
