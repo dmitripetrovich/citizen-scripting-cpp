@@ -121,6 +121,11 @@ static bool callerMemory(wasmtime_caller_t* caller, wasmtime_context_t* ctx, uin
     return *base != nullptr;
 }
 
+static bool inBounds(size_t memSz, uint32_t offset, size_t len)
+{
+    return static_cast<size_t>(offset) + len <= memSz;
+}
+
 static wasm_trap_t* cb_trace(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
 {
     auto* rt = static_cast<Runtime*>(env);
@@ -129,7 +134,7 @@ static wasm_trap_t* cb_trace(void* env, wasmtime_caller_t* caller, const wasmtim
     if (!callerMemory(caller, ctx, &base, &sz)) return nullptr;
     uint32_t ptr = static_cast<uint32_t>(args[0].of.i32);
     uint32_t len = static_cast<uint32_t>(args[1].of.i32);
-    if (ptr + len > sz) return nullptr;
+    if (!inBounds(sz, ptr, len)) return nullptr;
     std::string msg(reinterpret_cast<const char*>(base + ptr), len);
     if (rt->host())
         rt->host()->ScriptTrace(const_cast<char*>(msg.c_str()));
@@ -145,7 +150,7 @@ static wasm_trap_t* cb_invoke_native(void* env, wasmtime_caller_t* caller, const
     uint8_t* base; size_t sz;
     if (!callerMemory(caller, ctx, &base, &sz)) return nullptr;
     uint32_t ctxPtr = static_cast<uint32_t>(args[0].of.i32);
-    if (ctxPtr + sizeof(WasmNativeCtx) > sz) return nullptr;
+    if (!inBounds(sz, ctxPtr, sizeof(WasmNativeCtx))) return nullptr;
     WasmNativeCtx wctx{};
     memcpy(&wctx, base + ctxPtr, sizeof(WasmNativeCtx));
     fxNativeContext hostCtx{};
@@ -157,6 +162,7 @@ static wasm_trap_t* cb_invoke_native(void* env, wasmtime_caller_t* caller, const
         if ((wctx.ptrMask >> i) & 1u)
         {
             uint32_t off = static_cast<uint32_t>(wctx.args[i]);
+            if (off >= sz) return nullptr;
             hostCtx.arguments[i] = reinterpret_cast<uintptr_t>(base + off);
         }
         else
@@ -169,6 +175,8 @@ static wasm_trap_t* cb_invoke_native(void* env, wasmtime_caller_t* caller, const
     rt->lastNativeCtx() = hostCtx;
     for (int i = 0; i < hostCtx.numResults && i < 32; ++i)
         wctx.args[i] = static_cast<uint64_t>(hostCtx.arguments[i]);
+    callerMemory(caller, ctx, &base, &sz);
+    if (!inBounds(sz, ctxPtr, sizeof(WasmNativeCtx))) return nullptr;
     memcpy(base + ctxPtr, &wctx, sizeof(WasmNativeCtx));
     return nullptr;
 }
@@ -183,18 +191,16 @@ static wasm_trap_t* cb_copy_string_result(void* env, wasmtime_caller_t* caller, 
         results[0] = i32val(0);
         return nullptr;
     }
-    uint32_t ctxPtr = static_cast<uint32_t>(args[0].of.i32);
     int32_t resultIdx = args[1].of.i32;
     uint32_t bufPtr = static_cast<uint32_t>(args[2].of.i32);
     int32_t bufMax = args[3].of.i32;
-    if (ctxPtr + sizeof(WasmNativeCtx) > sz || resultIdx < 0 || resultIdx >= 32)
+    if (resultIdx < 0 || resultIdx >= 32)
     {
         results[0] = i32val(0);
         return nullptr;
     }
-    WasmNativeCtx wctx{};
-    memcpy(&wctx, base + ctxPtr, sizeof(WasmNativeCtx));
-    const char* str = reinterpret_cast<const char*>(static_cast<uintptr_t>(wctx.args[resultIdx]));
+    const auto& hostCtx = rt->lastNativeCtx();
+    const char* str = reinterpret_cast<const char*>(hostCtx.arguments[resultIdx]);
     if (!str)
     {
         results[0] = i32val(0);
@@ -202,7 +208,7 @@ static wasm_trap_t* cb_copy_string_result(void* env, wasmtime_caller_t* caller, 
     }
     size_t len = strlen(str);
     size_t copy = (bufMax > 1) ? std::min<size_t>(len, static_cast<size_t>(bufMax) - 1) : 0;
-    if (copy && bufPtr + copy + 1 <= sz)
+    if (copy && inBounds(sz, bufPtr, copy + 1))
     {
         memcpy(base + bufPtr, str, copy);
         base[bufPtr + copy] = '\0';
@@ -221,13 +227,14 @@ static wasm_trap_t* cb_emit_event(void* env, wasmtime_caller_t* caller, const wa
     uint32_t nameLen = static_cast<uint32_t>(args[1].of.i32);
     uint32_t argsPtr = static_cast<uint32_t>(args[2].of.i32);
     uint32_t argsLen = static_cast<uint32_t>(args[3].of.i32);
-    if (namePtr + nameLen > sz || argsPtr + argsLen > sz) return nullptr;
+    if (!inBounds(sz, namePtr, nameLen) || !inBounds(sz, argsPtr, argsLen)) return nullptr;
     std::string evName(reinterpret_cast<const char*>(base + namePtr), nameLen);
+    std::vector<uint8_t> argsCopy(base + argsPtr, base + argsPtr + argsLen);
     if (!rt->host()) return nullptr;
     fxNativeContext nctx{};
     nctx.nativeIdentifier = HashString("TRIGGER_EVENT_INTERNAL");
     nctx.arguments[0] = reinterpret_cast<uintptr_t>(evName.c_str());
-    nctx.arguments[1] = reinterpret_cast<uintptr_t>(base + argsPtr);
+    nctx.arguments[1] = reinterpret_cast<uintptr_t>(argsCopy.data());
     nctx.arguments[2] = static_cast<uintptr_t>(argsLen);
     nctx.arguments[3] = reinterpret_cast<uintptr_t>("-1");
     nctx.numArguments = 4;
@@ -247,15 +254,16 @@ static wasm_trap_t* cb_emit_net_event(void* env, wasmtime_caller_t* caller, cons
     int32_t target = args[2].of.i32;
     uint32_t argsPtr = static_cast<uint32_t>(args[3].of.i32);
     uint32_t argsLen = static_cast<uint32_t>(args[4].of.i32);
-    if (namePtr + nameLen > sz || argsPtr + argsLen > sz) return nullptr;
+    if (!inBounds(sz, namePtr, nameLen) || !inBounds(sz, argsPtr, argsLen)) return nullptr;
     std::string evName(reinterpret_cast<const char*>(base + namePtr), nameLen);
+    std::vector<uint8_t> argsCopy(base + argsPtr, base + argsPtr + argsLen);
     std::string targetStr = std::to_string(target);
     if (!rt->host()) return nullptr;
     fxNativeContext nctx{};
     nctx.nativeIdentifier = HashString("TRIGGER_CLIENT_EVENT_INTERNAL");
     nctx.arguments[0] = reinterpret_cast<uintptr_t>(evName.c_str());
     nctx.arguments[1] = reinterpret_cast<uintptr_t>(targetStr.c_str());
-    nctx.arguments[2] = reinterpret_cast<uintptr_t>(base + argsPtr);
+    nctx.arguments[2] = reinterpret_cast<uintptr_t>(argsCopy.data());
     nctx.arguments[3] = static_cast<uintptr_t>(argsLen);
     nctx.numArguments = 4;
     nctx.numResults = 0;
@@ -286,7 +294,7 @@ static wasm_trap_t* cb_get_resource_metadata(void* env, wasmtime_caller_t* calle
     int32_t index = args[2].of.i32;
     uint32_t bufPtr = static_cast<uint32_t>(args[3].of.i32);
     int32_t bufMax = args[4].of.i32;
-    if (keyPtr + keyLen > sz) { results[0] = i32val(0); return nullptr; }
+    if (!inBounds(sz, keyPtr, keyLen)) { results[0] = i32val(0); return nullptr; }
     std::string key(reinterpret_cast<const char*>(base + keyPtr), keyLen);
     fx::OMPtr<IScriptHostWithResourceData> md;
     fx::OMPtr<IScriptHost> h(rt->host());
@@ -298,7 +306,7 @@ static wasm_trap_t* cb_get_resource_metadata(void* env, wasmtime_caller_t* calle
             value = val;
     }
     int32_t actualLen = static_cast<int32_t>(value.size());
-    if (bufMax > 0 && bufPtr + static_cast<uint32_t>(std::min(bufMax, actualLen + 1)) <= sz)
+    if (bufMax > 0 && inBounds(sz, bufPtr, static_cast<size_t>(std::min(bufMax, actualLen + 1))))
     {
         size_t copy = std::min<size_t>(value.size(), static_cast<size_t>(bufMax) - 1);
         memcpy(base + bufPtr, value.data(), copy);
@@ -316,7 +324,7 @@ static wasm_trap_t* cb_get_num_resource_metadata(void* env, wasmtime_caller_t* c
     if (!callerMemory(caller, ctx, &base, &sz)) { results[0] = i32val(0); return nullptr; }
     uint32_t keyPtr = static_cast<uint32_t>(args[0].of.i32);
     uint32_t keyLen = static_cast<uint32_t>(args[1].of.i32);
-    if (keyPtr + keyLen > sz) { results[0] = i32val(0); return nullptr; }
+    if (!inBounds(sz, keyPtr, keyLen)) { results[0] = i32val(0); return nullptr; }
     std::string key(reinterpret_cast<const char*>(base + keyPtr), keyLen);
     fx::OMPtr<IScriptHostWithResourceData> md;
     fx::OMPtr<IScriptHost> h(rt->host());
@@ -354,7 +362,7 @@ static wasm_trap_t* cb_canonicalize_ref(void* env, wasmtime_caller_t* caller, co
     rt->host()->CanonicalizeRef(refIdx, rt->GetInstanceId(), &refString);
     if (!refString) { results[0] = i32val(0); return nullptr; }
     size_t len = strlen(refString);
-    if (bufMax > 0 && bufPtr + std::min<size_t>(len + 1, static_cast<size_t>(bufMax)) <= sz)
+    if (bufMax > 0 && inBounds(sz, bufPtr, std::min<size_t>(len + 1, static_cast<size_t>(bufMax))))
     {
         size_t copy = std::min<size_t>(len, static_cast<size_t>(bufMax) - 1);
         memcpy(base + bufPtr, refString, copy);
@@ -384,10 +392,11 @@ static wasm_trap_t* cb_invoke_function_reference(void* env, wasmtime_caller_t* c
     uint32_t argsPtr = static_cast<uint32_t>(args[2].of.i32);
     uint32_t argsLen = static_cast<uint32_t>(args[3].of.i32);
     uint32_t outPtr = static_cast<uint32_t>(args[4].of.i32);
-    if (refPtr + refLen > sz || argsPtr + argsLen > sz || outPtr + 8 > sz) return nullptr;
+    if (!inBounds(sz, refPtr, refLen) || !inBounds(sz, argsPtr, argsLen) || !inBounds(sz, outPtr, 8)) return nullptr;
     std::string refStr(reinterpret_cast<const char*>(base + refPtr), refLen);
+    std::vector<char> argsCopy(reinterpret_cast<char*>(base + argsPtr), reinterpret_cast<char*>(base + argsPtr) + argsLen);
     fx::OMPtr<IScriptBuffer> retBuf;
-    rt->host()->InvokeFunctionReference(const_cast<char*>(refStr.c_str()), reinterpret_cast<char*>(base + argsPtr), argsLen, retBuf.ReleaseAndGetAddressOf());
+    rt->host()->InvokeFunctionReference(const_cast<char*>(refStr.c_str()), argsCopy.data(), argsLen, retBuf.ReleaseAndGetAddressOf());
     uint32_t dataPtr = 0, dataLen = 0;
     if (retBuf.GetRef() && retBuf->GetLength() > 0)
     {
@@ -396,14 +405,14 @@ static wasm_trap_t* cb_invoke_function_reference(void* env, wasmtime_caller_t* c
         if (dataPtr)
         {
             callerMemory(caller, ctx, &base, &sz);
-            if (dataPtr + dataLen <= sz)
+            if (inBounds(sz, dataPtr, dataLen))
                 memcpy(base + dataPtr, retBuf->GetBytes(), dataLen);
         }
         else
             dataLen = 0;
     }
     callerMemory(caller, ctx, &base, &sz);
-    if (outPtr + 8 <= sz)
+    if (inBounds(sz, outPtr, 8))
     {
         memcpy(base + outPtr, &dataPtr, 4);
         memcpy(base + outPtr + 4, &dataLen, 4);
