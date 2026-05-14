@@ -20,9 +20,8 @@ inline void ResourceContext::trace(const char* fmt, ...)
 inline void ResourceContext::traceStr(const std::string& msg)
 {
     if (msg.empty()) return;
-    std::string buf(msg);
-    m_host->ScriptTrace(buf.data());
-    fprintf(stderr, "[script:%s] %s", m_name.c_str(), buf.c_str());
+    m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+    fprintf(stderr, "[script:%s] %s", m_name.c_str(), msg.c_str());
 }
 
 inline std::vector<uint8_t> ResourceContext::encodeArgs(std::initializer_list<json::Value> args)

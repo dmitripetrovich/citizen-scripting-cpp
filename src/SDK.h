@@ -11,3 +11,5 @@
 #include "Native/DB.h"
 #include "KVP.h"
 #include "Coroutine/Coroutine.h"
+#include "Interop/Process.h"
+#include "Interop/Worker.h"

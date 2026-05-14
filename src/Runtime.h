@@ -10,6 +10,9 @@
 #include <string>
 #include <unordered_map>
 #include <functional>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 #ifdef FXCPP_WASM_SUPPORT
 #include <wasmtime.h>
@@ -98,6 +101,18 @@ public:
     void wasmMapRef(int32_t refIdx, int32_t callbackId);
     void wasmDuplicateRef(int32_t callbackId);
     void wasmRemoveRef(int32_t callbackId);
+    struct WorkerState
+    {
+        enum Status { Running, Done, Error };
+        std::thread thread;
+        std::mutex mutex;
+        Status status = Running;
+        std::vector<char> result;
+    };
+    std::unordered_map<int32_t, std::unique_ptr<WorkerState>> m_workers;
+    int32_t m_nextWorkerId = 1;
+    wasmtime_module_t* wasmModule() const { return m_module; }
+    static wasm_engine_t* engine();
 #endif
 
 private:
@@ -155,6 +170,5 @@ private:
     void destroyWasm();
     std::string wasmErrMsg(wasmtime_error_t* err, wasm_trap_t* trap);
     result_t loadWasm(const std::string& resolvedPath);
-    static wasm_engine_t* engine();
 #endif
 };

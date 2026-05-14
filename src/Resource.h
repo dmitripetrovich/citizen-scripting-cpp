@@ -159,7 +159,10 @@ private:
     std::unordered_map<int32_t, int32_t> m_stateBagHandlerRefs; // cookie -> refIdx
 };
 
-namespace detail { inline ResourceContext* g_ctx = nullptr; }
+namespace detail {
+    inline ResourceContext* g_ctx = nullptr;
+    inline void* g_libHandle = nullptr;
+}
 inline ResourceContext* GetContext() { return detail::g_ctx; }
 
 }
@@ -175,9 +178,10 @@ inline ResourceContext* GetContext() { return detail::g_ctx; }
 #define _FXCPP_ENTRY \
     static void _fxcpp_resource_body(fx::ResourceContext&); \
     extern "C" FXCPP_RESOURCE_EXPORT \
-    void fxcpp_init(fx::ResourceContext* _ctx) \
+    void fxcpp_init(fx::ResourceContext* _ctx, void* _libHandle) \
     { \
         fx::detail::g_ctx = _ctx; \
+        fx::detail::g_libHandle = _libHandle; \
         _fxcpp_resource_body(*_ctx); \
     } \
     static void _fxcpp_resource_body([[maybe_unused]] fx::ResourceContext& ctx)

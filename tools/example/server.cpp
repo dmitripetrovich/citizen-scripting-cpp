@@ -97,4 +97,42 @@ Server
         }
         fx::trace("[fx::createThread] done\n");
     });
+
+    fx::ProcessResult result = fx::spawnProcess("echo hello from c++");
+    if (result.status == -1)
+        fx::trace("[fx::spawnProcess] permission denied\n");
+    else if (result.status == -2)
+        fx::trace("[fx::spawnProcess] failed to spawn\n");
+    else
+        fx::trace("[fx::spawnProcess] output: %s\n", result.output.c_str());
+
+    int32_t wid = fx::createWorker("test_worker", "hello from main");
+    if (wid == -1)
+        fx::trace("[fx::createWorker] permission denied\n");
+    else if (wid == -2)
+        fx::trace("[fx::createWorker] error\n");
+    else
+    {
+        fx::trace("[fx::createWorker] started worker %d\n", wid);
+        fx::setTimeout(100, [wid] {
+            fx::WorkerResult wr = fx::pollWorker(wid);
+            if (wr.status > 0)
+                fx::trace("[fx::pollWorker] result: %s\n", wr.output.c_str());
+            else if (wr.status == 0)
+                fx::trace("[fx::pollWorker] still running\n");
+            else
+                fx::trace("[fx::pollWorker] error (%d)\n", wr.status);
+        });
+    }
+}
+
+FXCPP_WORKER(test_worker)
+{
+    std::string msg(input, input_len);
+    std::string out = "worker got: " + msg;
+    int32_t copy = static_cast<int32_t>(out.size());
+    if (copy > result_max - 1) copy = result_max - 1;
+    memcpy(result, out.data(), copy);
+    result[copy] = '\0';
+    return copy;
 }

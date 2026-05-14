@@ -15,4 +15,6 @@
 #include "WASM/Timers.h"
 #include "WASM/KVP.h"
 #include "WASM/Coroutine.h"
+#include "WASM/Process.h"
+#include "WASM/Worker.h"
 #include "WASM/Entry.h"

@@ -468,6 +468,304 @@ static wasm_trap_t* cb_get_instance_id(void* env, wasmtime_caller_t*, const wasm
     return nullptr;
 }
 
+static bool HasWasmPermission(IScriptHost* host, const char* convarName, const std::string& resourceName)
+{
+    std::string allowed = GetConvar(host, convarName, "");
+    if (allowed.empty()) return false;
+    if (allowed == "*") return true;
+    size_t pos = 0;
+    while (pos < allowed.size())
+    {
+        size_t end = allowed.find(',', pos);
+        if (end == std::string::npos) end = allowed.size();
+        size_t start = pos;
+        while (start < end && allowed[start] == ' ') ++start;
+        size_t last = end;
+        while (last > start && allowed[last - 1] == ' ') --last;
+        if (std::string_view(allowed.data() + start, last - start) == resourceName)
+            return true;
+        pos = end + 1;
+    }
+    return false;
+}
+
+static wasm_trap_t* cb_spawn_process(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
+{
+    auto* rt = static_cast<Runtime*>(env);
+    auto* ctx = wasmtime_caller_context(caller);
+    uint8_t* base; size_t sz;
+    if (!callerMemory(caller, ctx, &base, &sz))
+    {
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    uint32_t cmdPtr = static_cast<uint32_t>(args[0].of.i32);
+    uint32_t cmdLen = static_cast<uint32_t>(args[1].of.i32);
+    uint32_t outBuf = static_cast<uint32_t>(args[2].of.i32);
+    int32_t outMax = args[3].of.i32;
+    if (!inBounds(sz, cmdPtr, cmdLen))
+    {
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    if (!HasWasmPermission(rt->host(), "sv_wasmChildProcess", rt->resourceName()))
+    {
+        fprintf(stderr, "[citizen-scripting-cpp/wasm] Resource '%s' denied child_process permission. Add 'set sv_wasmChildProcess \"%s\"' to your server.cfg\n", rt->resourceName().c_str(), rt->resourceName().c_str());
+        results[0] = i32val(-1);
+        return nullptr;
+    }
+    std::string cmd(reinterpret_cast<const char*>(base + cmdPtr), cmdLen);
+    static std::mutex envMutex;
+    std::lock_guard<std::mutex> lk(envMutex);
+    const char* savedLd = getenv("LD_LIBRARY_PATH");
+    std::string savedLdStr = savedLd ? savedLd : "";
+    if (savedLd) unsetenv("LD_LIBRARY_PATH");
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe)
+    {
+        if (!savedLdStr.empty()) setenv("LD_LIBRARY_PATH", savedLdStr.c_str(), 1);
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    std::string output;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), pipe))
+        output.append(buf);
+    pclose(pipe);
+    if (!savedLdStr.empty()) setenv("LD_LIBRARY_PATH", savedLdStr.c_str(), 1);
+    while (!output.empty() && output.back() == '\n')
+        output.pop_back();
+    callerMemory(caller, ctx, &base, &sz);
+    int32_t written = 0;
+    if (outMax > 0 && inBounds(sz, outBuf, static_cast<size_t>(outMax)))
+    {
+        size_t copy = std::min<size_t>(output.size(), static_cast<size_t>(outMax) - 1);
+        memcpy(base + outBuf, output.data(), copy);
+        base[outBuf + copy] = '\0';
+        written = static_cast<int32_t>(copy);
+    }
+    else if (output.size() > 0)
+    {
+        fprintf(stderr, "[citizen-scripting-cpp/wasm] spawn_process: output buffer out of bounds\n");
+    }
+    results[0] = i32val(written);
+    return nullptr;
+}
+
+static wasm_trap_t* cb_worker_trace(void*, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
+{
+    auto* ctx = wasmtime_caller_context(caller);
+    uint8_t* base; size_t sz;
+    if (!callerMemory(caller, ctx, &base, &sz)) return nullptr;
+    uint32_t ptr = static_cast<uint32_t>(args[0].of.i32);
+    uint32_t len = static_cast<uint32_t>(args[1].of.i32);
+    if (!inBounds(sz, ptr, len)) return nullptr;
+    fprintf(stderr, "[worker] %.*s", static_cast<int>(len), reinterpret_cast<const char*>(base + ptr));
+    return nullptr;
+}
+
+static wasm_trap_t* cb_worker_stub(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t* results, size_t nresults)
+{
+    for (size_t i = 0; i < nresults; i++)
+        results[i] = i32val(0);
+    return nullptr;
+}
+
+static wasm_trap_t* cb_create_worker(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
+{
+    auto* rt = static_cast<Runtime*>(env);
+    auto* ctx = wasmtime_caller_context(caller);
+    uint8_t* base; size_t sz;
+    if (!callerMemory(caller, ctx, &base, &sz))
+    {
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    uint32_t fnPtr = static_cast<uint32_t>(args[0].of.i32);
+    uint32_t fnLen = static_cast<uint32_t>(args[1].of.i32);
+    uint32_t inPtr = static_cast<uint32_t>(args[2].of.i32);
+    uint32_t inLen = static_cast<uint32_t>(args[3].of.i32);
+    if (!inBounds(sz, fnPtr, fnLen) || (inLen > 0 && !inBounds(sz, inPtr, inLen)))
+    {
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    if (!HasWasmPermission(rt->host(), "sv_wasmWorkerThreads", rt->resourceName()))
+    {
+        fprintf(stderr, "[citizen-scripting-cpp/wasm] Resource '%s' denied worker_threads permission. Add 'set sv_wasmWorkerThreads \"%s\"' to your server.cfg\n", rt->resourceName().c_str(), rt->resourceName().c_str());
+        results[0] = i32val(-1);
+        return nullptr;
+    }
+    std::string fnName(reinterpret_cast<const char*>(base + fnPtr), fnLen);
+    std::vector<char> inputData(base + inPtr, base + inPtr + inLen);
+    int32_t workerId = rt->m_nextWorkerId++;
+    auto state = std::make_unique<Runtime::WorkerState>();
+    auto* statePtr = state.get();
+    rt->m_workers[workerId] = std::move(state);
+    wasmtime_module_t* mod = rt->wasmModule();
+    statePtr->thread = std::thread([statePtr, mod, fnName, inputData = std::move(inputData)]()
+    {
+        auto* eng = Runtime::engine();
+        auto* store = wasmtime_store_new(eng, nullptr, nullptr);
+        auto* linker = wasmtime_linker_new(eng);
+        wasmtime_linker_allow_shadowing(linker, true);
+        wasmtime_linker_define_wasi(linker);
+        wasi_config_t* wasi = wasi_config_new();
+        wasmtime_context_set_wasi(wasmtime_store_context(store), wasi);
+        auto defFn = [&](const char* name, wasm_functype_t* ft, wasmtime_func_callback_t cb)
+        {
+            wasmtime_linker_define_func(linker, "fxcpp", 5, name, strlen(name), ft, cb, nullptr, nullptr);
+            wasm_functype_delete(ft);
+        };
+        defFn("trace", makeFuncType({WASM_I32, WASM_I32}, {}), cb_worker_trace);
+        defFn("invoke_native", makeFuncType({WASM_I32}, {}), cb_worker_stub);
+        defFn("copy_string_result", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("emit_event", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {}), cb_worker_stub);
+        defFn("emit_net_event", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {}), cb_worker_stub);
+        defFn("cancel_event", makeFuncType({}, {}), cb_worker_stub);
+        defFn("was_event_canceled", makeFuncType({}, {WASM_I32}), cb_worker_stub);
+        defFn("get_resource_metadata", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("get_num_resource_metadata", makeFuncType({WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("create_ref", makeFuncType({WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("canonicalize_ref", makeFuncType({WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("remove_ref", makeFuncType({WASM_I32}, {}), cb_worker_stub);
+        defFn("invoke_function_reference", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {}), cb_worker_stub);
+        defFn("get_instance_id", makeFuncType({}, {WASM_I32}), cb_worker_stub);
+        defFn("spawn_process", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("create_worker", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        defFn("poll_worker", makeFuncType({WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_worker_stub);
+        wasmtime_instance_t instance{};
+        wasm_trap_t* trap = nullptr;
+        auto* err = wasmtime_linker_instantiate(linker, wasmtime_store_context(store), mod, &instance, &trap);
+        if (err || trap)
+        {
+            std::lock_guard<std::mutex> lk(statePtr->mutex);
+            statePtr->status = Runtime::WorkerState::Error;
+            wasmtime_linker_delete(linker);
+            wasmtime_store_delete(store);
+            return;
+        }
+        auto* storeCtx = wasmtime_store_context(store);
+        wasmtime_extern_t memExt{};
+        bool hasMem = wasmtime_instance_export_get(storeCtx, &instance, "memory", 6, &memExt) && memExt.kind == WASMTIME_EXTERN_MEMORY;
+        wasmtime_extern_t allocExt{};
+        bool hasAlloc = wasmtime_instance_export_get(storeCtx, &instance, "fxcpp_alloc", 11, &allocExt) && allocExt.kind == WASMTIME_EXTERN_FUNC;
+        wasmtime_extern_t fnExt{};
+        if (!wasmtime_instance_export_get(storeCtx, &instance, fnName.c_str(), fnName.size(), &fnExt) || fnExt.kind != WASMTIME_EXTERN_FUNC)
+        {
+            fprintf(stderr, "[citizen-scripting-cpp/wasm] Worker export '%s' not found\n", fnName.c_str());
+            std::lock_guard<std::mutex> lk(statePtr->mutex);
+            statePtr->status = Runtime::WorkerState::Error;
+            wasmtime_linker_delete(linker);
+            wasmtime_store_delete(store);
+            return;
+        }
+        uint32_t inputPtr = 0;
+        if (!inputData.empty() && hasAlloc)
+        {
+            wasmtime_val_t allocArgs[1] = { i32val(static_cast<int32_t>(inputData.size())) };
+            wasmtime_val_t allocResult[1]{};
+            if (wasmCall(store, allocExt.of.func, allocArgs, 1, allocResult, 1, "worker", "fxcpp_alloc"))
+            {
+                inputPtr = static_cast<uint32_t>(allocResult[0].of.i32);
+                if (hasMem)
+                {
+                    uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
+                    size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
+                    if (inBounds(wsz, inputPtr, inputData.size()))
+                        memcpy(wbase + inputPtr, inputData.data(), inputData.size());
+                }
+            }
+        }
+        constexpr uint32_t resultBufSize = 65536;
+        uint32_t resultPtr = 0;
+        if (hasAlloc)
+        {
+            wasmtime_val_t allocArgs[1] = { i32val(static_cast<int32_t>(resultBufSize)) };
+            wasmtime_val_t allocResult[1]{};
+            if (wasmCall(store, allocExt.of.func, allocArgs, 1, allocResult, 1, "worker", "fxcpp_alloc"))
+                resultPtr = static_cast<uint32_t>(allocResult[0].of.i32);
+        }
+        wasmtime_val_t callArgs[4] = {
+            i32val(static_cast<int32_t>(inputPtr)),
+            i32val(static_cast<int32_t>(inputData.size())),
+            i32val(static_cast<int32_t>(resultPtr)),
+            i32val(static_cast<int32_t>(resultBufSize))
+        };
+        wasmtime_val_t callResult[1]{};
+        trap = nullptr;
+        err = wasmtime_func_call(storeCtx, &fnExt.of.func, callArgs, 4, callResult, 1, &trap);
+        if (err || trap)
+        {
+            if (err) wasmtime_error_delete(err);
+            if (trap) wasm_trap_delete(trap);
+            std::lock_guard<std::mutex> lk(statePtr->mutex);
+            statePtr->status = Runtime::WorkerState::Error;
+            wasmtime_linker_delete(linker);
+            wasmtime_store_delete(store);
+            return;
+        }
+        int32_t resultLen = callResult[0].of.i32;
+        {
+            std::lock_guard<std::mutex> lk(statePtr->mutex);
+            if (resultLen > 0 && hasMem)
+            {
+                uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
+                size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
+                if (inBounds(wsz, resultPtr, static_cast<size_t>(resultLen)))
+                    statePtr->result.assign(wbase + resultPtr, wbase + resultPtr + resultLen);
+            }
+            statePtr->status = Runtime::WorkerState::Done;
+        }
+        wasmtime_linker_delete(linker);
+        wasmtime_store_delete(store);
+    });
+    results[0] = i32val(workerId);
+    return nullptr;
+}
+
+static wasm_trap_t* cb_poll_worker(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
+{
+    auto* rt = static_cast<Runtime*>(env);
+    int32_t workerId = args[0].of.i32;
+    auto it = rt->m_workers.find(workerId);
+    if (it == rt->m_workers.end())
+    {
+        results[0] = i32val(-2);
+        return nullptr;
+    }
+    auto& state = it->second;
+    std::lock_guard<std::mutex> lk(state->mutex);
+    if (state->status == Runtime::WorkerState::Running)
+    {
+        results[0] = i32val(0);
+        return nullptr;
+    }
+    if (state->status == Runtime::WorkerState::Error)
+    {
+        if (state->thread.joinable()) state->thread.join();
+        rt->m_workers.erase(it);
+        results[0] = i32val(-1);
+        return nullptr;
+    }
+    auto* ctx = wasmtime_caller_context(caller);
+    uint8_t* base; size_t sz;
+    int32_t written = 0;
+    uint32_t outBuf = static_cast<uint32_t>(args[1].of.i32);
+    int32_t outMax = args[2].of.i32;
+    if (callerMemory(caller, ctx, &base, &sz) && outMax > 0 && inBounds(sz, outBuf, static_cast<size_t>(outMax)))
+    {
+        size_t copy = std::min<size_t>(state->result.size(), static_cast<size_t>(outMax) - 1);
+        memcpy(base + outBuf, state->result.data(), copy);
+        base[outBuf + copy] = '\0';
+        written = static_cast<int32_t>(copy);
+    }
+    if (state->thread.joinable()) state->thread.join();
+    rt->m_workers.erase(it);
+    results[0] = i32val(written > 0 ? written : 1); // at least 1 to signaal done
+    return nullptr;
+}
+
 #endif
 
 Runtime::Runtime() : m_instanceId(static_cast<int32_t>(reinterpret_cast<intptr_t>(this) & 0x7FFFFFFF)) {}
@@ -618,7 +916,7 @@ result_t Runtime::loadSharedLib(const std::string& resolvedPath)
     }
     m_tempLibPath = usedTempCopy ? loadPath : std::string{};
 
-    auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(dlsym(m_libHandle, "fxcpp_init"));
+    auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*, void*)>(dlsym(m_libHandle, "fxcpp_init"));
     if (!initFn)
     {
         fprintf(stderr, "[citizen-scripting-cpp] '%s' has no fxcpp_init export\n", resolvedPath.c_str());
@@ -652,7 +950,7 @@ result_t Runtime::loadSharedLib(const std::string& resolvedPath)
     bool initOk = false;
     try
     {
-        initFn(m_ctx);
+        initFn(m_ctx, m_libHandle);
         initOk = true;
     }
     catch (const std::exception& e)
@@ -858,6 +1156,9 @@ void Runtime::defineImports()
     def("remove_ref", makeFuncType({WASM_I32}, {}), cb_remove_ref);
     def("invoke_function_reference", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {}), cb_invoke_function_reference);
     def("get_instance_id", makeFuncType({}, {WASM_I32}), cb_get_instance_id);
+    def("spawn_process", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_spawn_process);
+    def("create_worker", makeFuncType({WASM_I32, WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_create_worker);
+    def("poll_worker", makeFuncType({WASM_I32, WASM_I32, WASM_I32}, {WASM_I32}), cb_poll_worker);
 }
 
 bool Runtime::resolveExports()
@@ -904,6 +1205,9 @@ bool Runtime::resolveExports()
 
 void Runtime::destroyWasm()
 {
+    for (auto& [id, w] : m_workers)
+        if (w->thread.joinable()) w->thread.join();
+    m_workers.clear();
     if (m_linker) { wasmtime_linker_delete(m_linker); m_linker = nullptr; }
     if (m_module) { wasmtime_module_delete(m_module); m_module = nullptr; }
     if (m_store) { wasmtime_store_delete(m_store); m_store = nullptr; }
@@ -1206,10 +1510,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     std::string allowed = GetConvar(m_host.GetRef(), "sv_allowNativeCode", "false");
     if (allowed != "true" && allowed != "1")
     {
-        fprintf(stderr, "[citizen-scripting-cpp] Blocked native .so resource '%s'. "
-            "Native code runs unsandboxed with full host access. "
-            "To allow, add 'sv_allowNativeCode true' to your server.cfg. "
-            "Consider using .wasm for sandboxed execution.\n", m_resourceName.c_str());
+        fprintf(stderr, "[citizen-scripting-cpp] Blocked native .so resource '%s'. Native code runs unsandboxed with full host access. To allow, add 'sv_allowNativeCode true' to your server.cfg. Consider using .wasm for sandboxed execution.\n", m_resourceName.c_str());
         return FX_E_INVALIDARG;
     }
 

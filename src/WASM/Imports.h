@@ -61,4 +61,13 @@ extern "C"
 
     __attribute__((import_module("fxcpp"), import_name("get_instance_id")))
     int32_t __fxcpp_get_instance_id();
+
+    __attribute__((import_module("fxcpp"), import_name("spawn_process")))
+    int32_t __fxcpp_spawn_process(const char* cmd, uint32_t cmd_len, char* out_buf, int32_t out_buf_max);
+
+    __attribute__((import_module("fxcpp"), import_name("create_worker")))
+    int32_t __fxcpp_create_worker(const char* fn_name, uint32_t fn_name_len, const char* input, uint32_t input_len);
+
+    __attribute__((import_module("fxcpp"), import_name("poll_worker")))
+    int32_t __fxcpp_poll_worker(int32_t worker_id, char* out_buf, int32_t out_buf_max);
 }

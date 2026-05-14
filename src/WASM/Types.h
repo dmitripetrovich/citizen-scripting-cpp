@@ -46,16 +46,17 @@ struct Value
 struct Reader
 {
     const uint8_t* p; const uint8_t* end;
-    uint8_t u8() { return p < end ? *p++ : 0; }
+    bool error = false;
+    uint8_t u8() { if (p >= end) { error = true; return 0; } return *p++; }
     uint16_t u16() { uint8_t a=u8(),b=u8(); return (uint16_t)(a<<8|b); }
     uint32_t u32() { uint16_t a=u16(),b=u16(); return (uint32_t)(a<<16|b); }
     uint64_t u64() { uint32_t a=u32(),b=u32(); return (uint64_t)a<<32|b; }
     std::string str(uint32_t n)
-    { if(p+n>end) n=(uint32_t)(end-p);
+    { if(p+n>end) { error = true; n=(uint32_t)(end-p); }
       std::string s((const char*)p,n); p+=n; return s; }
     Value read(int d=0)
     {
-        if (d > 64 || p >= end) return {};
+        if (d > 64 || p >= end || error) return {};
         uint8_t b = u8(); Value v;
         if ((b&0x80)==0) { v.kind=Value::Kind::Number; v.scalar=std::to_string(b); return v; }
         if ((b&0xE0)==0xE0){ v.kind=Value::Kind::Number; v.scalar=std::to_string((int8_t)b); return v; }
@@ -126,8 +127,9 @@ struct Reader
 
 inline Value decode(const void* data, uint32_t size)
 {
-    Reader r{(const uint8_t*)data, (const uint8_t*)data + size};
-    return r.read();
+    Reader r{(const uint8_t*)data, (const uint8_t*)data + size, false};
+    auto v = r.read();
+    return r.error ? Value{} : v;
 }
 
 inline void ensureArray(Value& v)
@@ -201,7 +203,7 @@ struct Writer
             if (n<=255) { pu8(0xC7); pu8((uint8_t)n); }
             else if (n<=65535) { pu8(0xC8); pu16((uint16_t)n); }
             else { pu8(0xC9); pu32(n); }
-            pu8(10); // function reference ext type
+            pu8(10);
             buf.insert(buf.end(), v.scalar.begin(), v.scalar.end());
             break;
         }

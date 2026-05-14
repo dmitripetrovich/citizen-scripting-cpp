@@ -58,7 +58,7 @@ public:
     }
     JsonObj& set(std::string_view key, int value) { return set(key, static_cast<int64_t>(value)) ; }
     JsonObj& set(std::string_view key, uint32_t v) { return set(key, static_cast<int64_t>(v)) ; }
-    JsonObj& set(std::string_view key, uint64_t v) { return set(key, static_cast<int64_t>(static_cast<int64_t>(v))) ; }
+    JsonObj& set(std::string_view key, uint64_t v) { return set(key, static_cast<int64_t>(v)); }
 
     JsonObj& set(std::string_view key, double value)
     {
@@ -269,21 +269,21 @@ struct Parser
         }
         else if (c == 't')
         {
-            if (pos + 4 > src.size() || src.substr(pos, 4) != "true")
+            if (pos + 4 > src.size() || src.compare(pos, 4, "true") != 0)
                 throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Bool; v.scalar = "true";
             pos += 4;
         }
         else if (c == 'f')
         {
-            if (pos + 5 > src.size() || src.substr(pos, 5) != "false")
+            if (pos + 5 > src.size() || src.compare(pos, 5, "false") != 0)
                 throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Bool; v.scalar = "false";
             pos += 5;
         }
         else if (c == 'n')
         {
-            if (pos + 4 > src.size() || src.substr(pos, 4) != "null")
+            if (pos + 4 > src.size() || src.compare(pos, 4, "null") != 0)
                 throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Null;
             pos += 4;
@@ -305,7 +305,7 @@ struct Parser
                 if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) ++pos;
                 while (pos < src.size() && std::isdigit(static_cast<unsigned char>(src[pos]))) ++pos;
             }
-            v.scalar = std::string(src.substr(start, pos - start));
+            v.scalar = std::string(src.data() + start, pos - start);
         }
         return v;
     }
