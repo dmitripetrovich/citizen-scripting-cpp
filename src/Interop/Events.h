@@ -48,16 +48,18 @@ inline void traceStr(const std::string& msg)
         ctx->traceStr(msg);
 }
 
-inline void emit(const std::string& event, std::initializer_list<json::Value> args = {})
+template<typename... TArgs>
+inline void emit(const std::string& event, TArgs&&... args)
 {
     if (auto* ctx = detail::g_ctx)
-        ctx->emit(event, args);
+        ctx->emit(event, {json::Value(std::forward<TArgs>(args))...});
 }
 
-inline void emitNet(const std::string& event, int target, std::initializer_list<json::Value> args = {})
+template<typename... TArgs>
+inline void emitNet(const std::string& event, int target, TArgs&&... args)
 {
     if (auto* ctx = detail::g_ctx)
-        ctx->emitNet(event, target, args);
+        ctx->emitNet(event, target, {json::Value(std::forward<TArgs>(args))...});
 }
 
 inline void cancelEvent()

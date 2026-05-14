@@ -13,5 +13,6 @@
 #include "WASM/Exports.h"
 #include "WASM/Commands.h"
 #include "WASM/Timers.h"
+#include "WASM/KVP.h"
 #include "WASM/Coroutine.h"
 #include "WASM/Entry.h"
