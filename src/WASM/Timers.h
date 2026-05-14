@@ -9,7 +9,9 @@ inline int32_t setTimeout(uint32_t ms, std::function<void()> cb)
 {
     auto* c = fxw_internal::currentContext();
     if (!c) return -1;
-    int32_t id = c->nextTimerId++;
+    if (c->timers.size() >= 8192) return -1;
+    int32_t id = c->nextTimerId;
+    if (++c->nextTimerId <= 0) c->nextTimerId = 1;
     auto fire = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
     c->timers[id] = { id, fire, 0, std::move(cb) };
     return id;
@@ -19,7 +21,9 @@ inline int32_t setInterval(uint32_t ms, std::function<void()> cb)
 {
     auto* c = fxw_internal::currentContext();
     if (!c) return -1;
-    int32_t id = c->nextTimerId++;
+    if (c->timers.size() >= 8192) return -1;
+    int32_t id = c->nextTimerId;
+    if (++c->nextTimerId <= 0) c->nextTimerId = 1;
     auto fire = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
     c->timers[id] = { id, fire, ms, std::move(cb) };
     return id;

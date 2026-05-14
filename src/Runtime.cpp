@@ -895,7 +895,7 @@ void Runtime::destroyWasm()
     if (m_store) { wasmtime_store_delete(m_store); m_store = nullptr; }
     m_hasMemory = m_hasTickFn = m_hasEventFn = m_hasStopFn = false;
     m_hasAllocFn = m_hasFreeFn = m_hasInvokeRefFn = false;
-    m_hasDuplicateRefFn = m_hasRemoveRefFn = false;
+    m_hasDuplicateRefFn = m_hasRemoveRefFn = m_hasHasPendingWorkFn = false;
 }
 
 result_t Runtime::loadWasm(const std::string& resolvedPath)

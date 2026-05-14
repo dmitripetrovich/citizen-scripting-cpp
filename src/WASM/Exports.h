@@ -63,8 +63,6 @@ inline json::Value callExport(const std::string& resource, const std::string& na
     setterArr.children.push_back(std::move(setterVal));
     auto setterPayload = fxw_internal::encode(setterArr);
     std::string eventName = "__cfx_export_" + resource + "_" + name;
-    fxw_internal::Writer w;
-    w.arrayHeader(static_cast<uint32_t>(setterPayload.size()));
     __fxcpp_emit_event(eventName.c_str(), static_cast<uint32_t>(eventName.size()), setterPayload.data(), static_cast<uint32_t>(setterPayload.size()));
     detail::removeRef(setterRef);
     if (capturedRef->empty()) return {};

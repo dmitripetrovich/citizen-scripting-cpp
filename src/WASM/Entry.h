@@ -32,7 +32,16 @@ FXCPP_WASM_EXPORT(fxcpp_on_event) void fxcpp_on_event(const char* name, uint32_t
 FXCPP_WASM_EXPORT(fxcpp_on_stop) void fxcpp_on_stop()
 {
     fxw_internal::cleanupCoroutines();
-    if (auto* c = fxw_internal::currentContext()) c->dispatchStop();
+    if (auto* c = fxw_internal::currentContext())
+    {
+        for (auto& [cookie, hostRef] : c->stateBagHandlerRefs)
+        {
+            fx::invokeNative(HashString("REMOVE_STATE_BAG_CHANGE_HANDLER"), {fx::NativeArg(cookie)});
+            fx::detail::removeRef(hostRef);
+        }
+        c->stateBagHandlerRefs.clear();
+        c->dispatchStop();
+    }
 }
 
 FXCPP_WASM_EXPORT(fxcpp_invoke_ref) int32_t fxcpp_invoke_ref(int32_t callback_id, const uint8_t* args_ptr, uint32_t args_len, uint8_t* result_ptr, uint32_t result_max)

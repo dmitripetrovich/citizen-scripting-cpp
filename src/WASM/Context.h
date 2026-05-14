@@ -26,6 +26,7 @@ struct Context
     std::unordered_set<std::string> netSafeEvents;
     std::unordered_map<int32_t, TimerEntry> timers;
     int32_t nextTimerId = 1;
+    std::unordered_map<int32_t, int32_t> stateBagHandlerRefs; // cookie -> hostRef
 
     void dispatchTick()
     {

@@ -93,12 +93,24 @@ inline int32_t addStateBagChangeHandler(const std::string& keyFilter, const std:
     const char* keyArg = keyFilter.empty() ? nullptr : keyFilter.c_str();
     const char* bagArg = bagFilter.empty() ? nullptr : bagFilter.c_str();
     auto ctx = invokeNative(HashString("ADD_STATE_BAG_CHANGE_HANDLER"), {NativeArg::ptr(keyArg), NativeArg::ptr(bagArg), NativeArg::ptr(cbRef.c_str())}, 1);
-    return static_cast<int32_t>(ctx.args[0]);
+    int32_t cookie = static_cast<int32_t>(ctx.args[0]);
+    if (auto* c = fxw_internal::currentContext())
+        c->stateBagHandlerRefs[cookie] = hostRef;
+    return cookie;
 }
 
 inline void removeStateBagChangeHandler(int32_t cookie)
 {
     invokeNative(HashString("REMOVE_STATE_BAG_CHANGE_HANDLER"), {NativeArg(cookie)});
+    if (auto* c = fxw_internal::currentContext())
+    {
+        auto it = c->stateBagHandlerRefs.find(cookie);
+        if (it != c->stateBagHandlerRefs.end())
+        {
+            detail::removeRef(it->second);
+            c->stateBagHandlerRefs.erase(it);
+        }
+    }
 }
 
 }
