@@ -267,7 +267,11 @@ def main():
     header = f"""// Auto-generated, do not edit.
 #pragma once
 
+#ifdef __wasm__
+#include "../WASM/Natives.h"
+#else
 #include "Native.h"
+#endif
 
 namespace fx::natives
 {{

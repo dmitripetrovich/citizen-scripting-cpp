@@ -66,6 +66,11 @@ namespace detail
         {
             ctx.args[idx] = arg ? 1 : 0;
         }
+        else if constexpr (std::is_pointer_v<D>)
+        {
+            ctx.args[idx] = reinterpret_cast<uint64_t>(arg);
+            ctx.ptrMask |= (1u << idx);
+        }
         else
         {
             ctx.args[idx] = static_cast<uint64_t>(arg);
@@ -132,18 +137,6 @@ inline TResult invoke(uint64_t hash, TArgs&&... args)
     {
         return static_cast<TResult>(invokeRaw(hash, std::forward<TArgs>(args)...));
     }
-}
-
-namespace cfx
-{
-    inline std::string GetPlayerIdentifierByType(const char* playerSrc, const char* identifierType)
-    { return invoke<std::string>(0xA61C8FC6, playerSrc, identifierType); }
-
-    inline std::string GetPlayerName(const char* playerSrc)
-    { return invoke<std::string>(0x406B4B20, playerSrc); }
-
-    inline int GetPlayerPing(const char* playerSrc)
-    { return invoke<int>(0xFF1290D4, playerSrc); }
 }
 
 }

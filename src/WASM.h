@@ -5,6 +5,7 @@
 #include "WASM/Context.h"
 #include "WASM/Refs.h"
 #include "WASM/Natives.h"
+#include "Native/DB.h"
 #include "WASM/Events.h"
 #include "WASM/Lifecycle.h"
 #include "WASM/Metadata.h"
