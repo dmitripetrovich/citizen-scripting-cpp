@@ -36,14 +36,16 @@ After building the runtime, you should have `build/bin/Release/libcitizen-script
 
 ### Compile a resource
 
-Use the `tools/build` utility, it auto-detects the target from the output extension and sets all required flags:
+Use the `tools/build` utility, specify the source file and target type (`native` or `wasm`).
+
+The output filename is derived from the source:
 
 ```bash
-# Native shared library
-/path/to/citizen-scripting-cpp/tools/build server.cpp -o server.so
+# Native shared library (generates server.so)
+/path/to/citizen-scripting-cpp/tools/build server.cpp -o native
 
-# WebAssembly module
-/path/to/citizen-scripting-cpp/tools/build server.cpp -o server.wasm
+# WebAssembly module (generates server.wasm)
+/path/to/citizen-scripting-cpp/tools/build server.cpp -o wasm
 ```
 
 Extra flags are passed through to the compiler (e.g. `-O3`, `-Wall`, `-DDEBUG`).
@@ -56,10 +58,10 @@ Extra flags are passed through to the compiler (e.g. `-O3`, `-Wall`, `-DDEBUG`).
 export FX_SERVER_DIR=/path/to/cfx-server
 export FX_RESOURCE_DIR=/path/to/resources/example
 
-# Build and deploy (native)                                                                            
-tools/deploy              
+# Build and deploy (native)
+tools/deploy --type native
 
-# Build and deploy (WASM) 
+# Build and deploy (WASM)
 tools/deploy --type wasm
 ```
 
@@ -96,11 +98,11 @@ To compile resources you only need:
 ```bash
 git clone https://github.com/bd53/citizen-scripting-cpp.git
 
-# Native shared library
-/path/to/citizen-scripting-cpp/tools/build server.cpp -o server.so
+# Native shared library (generates server.so)
+/path/to/citizen-scripting-cpp/tools/build server.cpp -o native
 
-# WebAssembly module
-/path/to/citizen-scripting-cpp/tools/build server.cpp -o server.wasm
+# WebAssembly module (generates server.wasm)
+/path/to/citizen-scripting-cpp/tools/build server.cpp -o wasm
 ```
 
 **Known issues**

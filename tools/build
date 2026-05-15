@@ -1,25 +1,32 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-OUTPUT=""
-for ((i=1; i<=$#; i++)); do
-    if [[ "${!i}" == "-o" ]]; then
-        j=$((i+1))
-        OUTPUT="${!j}"
-        break
-    fi
+usage() {
+    echo "Usage: build <source> -o <native|wasm>" >&2
+    exit 1
+}
+
+TARGET=""
+SOURCE=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) TARGET="${2:?-o requires a value}"; shift 2 ;;
+        *)  [[ -z "$SOURCE" && "$1" != -* ]] && SOURCE="$1" || ARGS+=("$1"); shift ;;
+    esac
 done
 
-if [[ -z "$OUTPUT" ]]; then
-    echo "Usage: build <source...> [flags] -o <output.wasm|output.so>"
+[[ -z "$SOURCE" || -z "$TARGET" ]] && usage
+[[ "$TARGET" != "native" && "$TARGET" != "wasm" ]] && {
+    echo "Error: unknown target '$TARGET' (expected 'native' or 'wasm')" >&2
     exit 1
-fi
+}
 
-EXT="${OUTPUT##*.}"
+BASENAME="${SOURCE%.*}"
 
-case "$EXT" in
+case "$TARGET" in
     wasm)
         SYSROOT="${WASI_SYSROOT:-}"
         if [[ -z "$SYSROOT" ]]; then
@@ -35,15 +42,11 @@ case "$EXT" in
             --sysroot="$SYSROOT" -fno-exceptions \
             -I"$PROJECT_DIR" \
             -Wl,--export-memory \
-            "$@"
+            "${ARGS[@]}" "$SOURCE" -o "$BASENAME.wasm"
         ;;
-    so)
+    native)
         exec g++ -std=c++23 -O2 -shared -fPIC -fvisibility=hidden \
             -I"$PROJECT_DIR" \
-            "$@"
-        ;;
-    *)
-        echo "output must be .wasm or .so"
-        exit 1
+            "${ARGS[@]}" "$SOURCE" -o "$BASENAME.so"
         ;;
 esac
