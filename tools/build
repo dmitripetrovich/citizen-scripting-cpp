@@ -38,7 +38,9 @@ case "$TARGET" in
             echo "wasi-sysroot not found. Install it or set WASI_SYSROOT."
             exit 1
         fi
-        exec clang++ --target=wasm32-wasip1 -std=c++23 -O2 \
+        WASM_CXX="${WASI_SDK:+$WASI_SDK/bin/clang++}"
+        WASM_CXX="${WASM_CXX:-clang++}"
+        exec "$WASM_CXX" --target=wasm32-wasip1 -std=c++23 -O2 \
             --sysroot="$SYSROOT" -fno-exceptions \
             -I"$PROJECT_DIR" \
             -Wl,--export-memory \
