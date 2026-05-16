@@ -1,6 +1,11 @@
 newoption {
     trigger = "wasm",
-    description = "Build with WebAssembly via wasmtime"
+    description = "Build with WebAssembly support only"
+}
+
+newoption {
+    trigger = "native",
+    description = "Build with native support only"
 }
 
 local component = dofile("component.lua")
@@ -21,6 +26,13 @@ project "citizen-scripting-cpp"
         "src/Component.cpp",
     }
     includedirs { "." }
+
+    if _OPTIONS["wasm"] then
+    elseif _OPTIONS["native"] then
+        defines { "FXCPP_NATIVE_SUPPORT" }
+    else
+        defines { "FXCPP_NATIVE_SUPPORT" }
+    end
 
     component()
 

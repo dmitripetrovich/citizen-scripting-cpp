@@ -1,7 +1,10 @@
 #pragma once
 
 #include "fxScripting.h"
+
+#ifdef FXCPP_NATIVE_SUPPORT
 #include "../src/CppScriptNative.h"
+#endif
 
 #include <string>
 #include <unordered_map>
@@ -152,8 +155,12 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         enum class Mode
         {
                 None,
+#ifdef FXCPP_NATIVE_SUPPORT
                 SharedLib,
-                Wasm
+#endif
+#ifdef FXCPP_WASM_SUPPORT
+                Wasm,
+#endif
         };
         Mode m_mode = Mode::None;
         fx::OMPtr<IScriptHost> m_host;
@@ -164,8 +171,11 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         std::string m_resourceName;
         std::unordered_map<int32_t, fx::RefCallback> m_refs;
         uint32_t m_nextRefIdx = 1;
+        int32_t allocRefIdx();
         uint64_t m_nextBoundaryId = 1;
         uint64_t nextBoundaryId();
+
+#ifdef FXCPP_NATIVE_SUPPORT
         void* m_libHandle = nullptr;
         fx::ResourceContext* m_ctx = nullptr;
         std::string m_tempLibPath;
@@ -173,6 +183,7 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         void cleanupTemp();
         void cleanupLoadFailure();
         result_t loadSharedLib(const std::string& resolvedPath);
+#endif
 
 #ifdef FXCPP_WASM_SUPPORT
         wasmtime_store_t* m_store = nullptr;

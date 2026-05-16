@@ -81,14 +81,6 @@ class JsonObj
                 append(key, quote(value));
                 return *this;
         }
-        JsonObj& set(std::string_view key, const std::string& value)
-        {
-                return set(key, std::string_view(value));
-        }
-        JsonObj& set(std::string_view key, const char* value)
-        {
-                return set(key, std::string_view(value));
-        }
         JsonObj& set(std::string_view key, int64_t value)
         {
                 append(key, std::to_string(value));
@@ -173,11 +165,8 @@ struct Value
                 snprintf(buf, sizeof(buf), "%g", v);
                 scalar = buf;
         }
-        Value(float v) : kind(Kind::Number)
+        Value(float v) : Value(static_cast<double>(v))
         {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%g", static_cast<double>(v));
-                scalar = buf;
         }
         Value(bool b) : kind(Kind::Bool), scalar(b ? "true" : "false")
         {
@@ -976,12 +965,8 @@ inline bool EventArgs::get<bool>(size_t i) const
 using EventHandler = std::function<void(const std::string& source, const EventArgs&)>;
 using TickHandler = std::function<void()>;
 using CommandHandler = std::function<void(const std::string& source, const std::vector<std::string>& args)>;
-using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
-using AddRefFn = std::function<int32_t(RefCallback)>;
 using ExportHandler = std::function<json::Value(const EventArgs&)>;
 using StopHandler = std::function<void()>;
-using RemoveRefFn = std::function<void(int32_t)>;
-using ScheduleBookmarkFn = std::function<void(uint64_t, int64_t)>;
 using StateBagChangeHandler = std::function<void(const std::string& bagName, const std::string& key, const json::Value& value, int source, bool replicated)>;
 using HttpCallback = std::function<void(int statusCode, const std::string& body, const std::string& headers)>;
 
@@ -1232,29 +1217,11 @@ class ResourceContext
         }
         int32_t setTimeout(uint32_t ms, std::function<void()> cb)
         {
-                if (m_timers.size() >= 8192)
-                {
-                        trace("Timer limit reached\n");
-                        return -1;
-                }
-                uint32_t id = m_nextTimerId;
-                if (++m_nextTimerId == 0)
-                        m_nextTimerId = 1;
-                m_timers[static_cast<int32_t>(id)] = { static_cast<int32_t>(id), std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), 0, std::move(cb) };
-                return static_cast<int32_t>(id);
+                return addTimer(ms, 0, std::move(cb));
         }
         int32_t setInterval(uint32_t ms, std::function<void()> cb)
         {
-                if (m_timers.size() >= 8192)
-                {
-                        trace("Timer limit reached\n");
-                        return -1;
-                }
-                uint32_t id = m_nextTimerId;
-                if (++m_nextTimerId == 0)
-                        m_nextTimerId = 1;
-                m_timers[static_cast<int32_t>(id)] = { static_cast<int32_t>(id), std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), ms, std::move(cb) };
-                return static_cast<int32_t>(id);
+                return addTimer(ms, ms, std::move(cb));
         }
         void clearTimer(int32_t id)
         {
@@ -1759,6 +1726,19 @@ class ResourceContext
         }
 
     private:
+        int32_t addTimer(uint32_t ms, uint32_t intervalMs, std::function<void()> cb)
+        {
+                if (m_timers.size() >= 8192)
+                {
+                        trace("Timer limit reached\n");
+                        return -1;
+                }
+                uint32_t id = m_nextTimerId;
+                if (++m_nextTimerId == 0)
+                        m_nextTimerId = 1;
+                m_timers[static_cast<int32_t>(id)] = { static_cast<int32_t>(id), std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), intervalMs, std::move(cb) };
+                return static_cast<int32_t>(id);
+        }
         fx::OMPtr<IScriptHost> m_host;
         IScriptRuntime* m_runtime = nullptr;
         fx::OMPtr<IScriptRuntimeHandler> m_handler;
@@ -1970,20 +1950,17 @@ inline void setStateBagValue(const std::string& bag, const std::string& key, con
 
 inline void setPlayerState(int id, const std::string& key, const json::Value& v, bool r = true)
 {
-        if (auto* ctx = detail::g_ctx)
-                ctx->setPlayerState(id, key, v, r);
+        setStateBagValue("player:" + std::to_string(id), key, v, r);
 }
 
 inline void setEntityState(int id, const std::string& key, const json::Value& v, bool r = true)
 {
-        if (auto* ctx = detail::g_ctx)
-                ctx->setEntityState(id, key, v, r);
+        setStateBagValue("entity:" + std::to_string(id), key, v, r);
 }
 
 inline void setGlobalState(const std::string& key, const json::Value& v, bool r = true)
 {
-        if (auto* ctx = detail::g_ctx)
-                ctx->setGlobalState(key, v, r);
+        setStateBagValue("global", key, v, r);
 }
 
 inline json::Value getStateBagValue(const std::string& bag, const std::string& key)
@@ -1993,17 +1970,17 @@ inline json::Value getStateBagValue(const std::string& bag, const std::string& k
 
 inline json::Value getPlayerState(int id, const std::string& key)
 {
-        return detail::g_ctx ? detail::g_ctx->getPlayerState(id, key) : json::makeNull();
+        return getStateBagValue("player:" + std::to_string(id), key);
 }
 
 inline json::Value getEntityState(int id, const std::string& key)
 {
-        return detail::g_ctx ? detail::g_ctx->getEntityState(id, key) : json::makeNull();
+        return getStateBagValue("entity:" + std::to_string(id), key);
 }
 
 inline json::Value getGlobalState(const std::string& key)
 {
-        return detail::g_ctx ? detail::g_ctx->getGlobalState(key) : json::makeNull();
+        return getStateBagValue("global", key);
 }
 
 inline bool stateBagHasKey(const std::string& bag, const std::string& key)
@@ -2277,68 +2254,14 @@ inline void ResourceContext::cleanupBookmarks()
 namespace fx
 {
 
-struct ProcessResult
-{
-        int32_t status;
-        std::string output;
-};
-
-inline ProcessResult spawnProcess(const std::string& command)
-{
-        ProcessResult result{ };
-        int pipefd[2];
-        if (pipe(pipefd) < 0)
-        {
-                result.status = -2;
-                return result;
-        }
-        std::vector<std::string> envStrs;
-        std::vector<char*> envp;
-        for (char** e = environ; e && *e; ++e)
-                if (strncmp(*e, "LD_LIBRARY_PATH=", 16) != 0)
-                        envStrs.push_back(*e);
-        for (auto& s : envStrs)
-                envp.push_back(s.data());
-        envp.push_back(nullptr);
-        pid_t pid = fork();
-        if (pid < 0)
-        {
-                close(pipefd[0]);
-                close(pipefd[1]);
-                result.status = -2;
-                return result;
-        }
-        if (pid == 0)
-        {
-                close(pipefd[0]);
-                dup2(pipefd[1], STDOUT_FILENO);
-                dup2(pipefd[1], STDERR_FILENO);
-                close(pipefd[1]);
-                execle("/bin/sh", "sh", "-c", command.c_str(), nullptr, envp.data());
-                _exit(127);
-        }
-        close(pipefd[1]);
-        char buf[4096];
-        ssize_t n;
-        while ((n = read(pipefd[0], buf, sizeof(buf))) > 0)
-                result.output.append(buf, static_cast<size_t>(n));
-        close(pipefd[0]);
-        int wstatus = 0;
-        waitpid(pid, &wstatus, 0);
-        while (!result.output.empty() && result.output.back() == '\n')
-                result.output.pop_back();
-        result.status = static_cast<int32_t>(result.output.size());
-        return result;
 }
 
-}
-
-#define FXCPP_WORKER(name)                                                                                  \
-        static int32_t name##_impl(const char* input, int32_t input_len, char* result, int32_t result_max); \
-        extern "C" int32_t name(intptr_t ip, int32_t il, intptr_t rp, int32_t rm)                           \
-        {                                                                                                   \
-                return name##_impl(reinterpret_cast<const char*>(ip), il, reinterpret_cast<char*>(rp), rm); \
-        }                                                                                                   \
+#define FXCPP_WORKER(name)                                                                                               \
+        static int32_t name##_impl(const char* input, int32_t input_len, char* result, int32_t result_max);              \
+        extern "C" __attribute__((visibility("default"))) int32_t name(intptr_t ip, int32_t il, intptr_t rp, int32_t rm) \
+        {                                                                                                                \
+                return name##_impl(reinterpret_cast<const char*>(ip), il, reinterpret_cast<char*>(rp), rm);              \
+        }                                                                                                                \
         static int32_t name##_impl(const char* input, int32_t input_len, char* result, int32_t result_max)
 
 namespace fx

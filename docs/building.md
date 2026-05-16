@@ -4,23 +4,63 @@ To build the runtime plugin on Linux you need the following dependencies:
 
 - [g++](https://gcc.gnu.org/) with C++23 support (GCC 13 or higher recommended)
 - [premake5](https://premake.github.io/)
-- [Rust toolchain](https://rustup.rs/) - for building wasmtime from source
+- [Rust toolchain](https://rustup.rs/) - for building wasmtime from source (WASM builds only)
 - [Zig](https://ziglang.org/) - for musl libc cross-compilation
 - [clang++](https://clang.llvm.org/) with [WASI sysroot](https://github.com/WebAssembly/wasi-sdk) - for compiling `.wasm` resources
 - [FXServer](https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/)
 
-Then clone with submodules and build wasmtime first (one-time):
+Then clone with submodules:
 
 ```bash
 git clone --recursive https://github.com/bd53/citizen-scripting-cpp.git
 cd citizen-scripting-cpp
+```
 
+### Build modes
+
+The runtime supports three build modes:
+
+| Command | Mode | Handles |
+|---------|------|---------|
+| `premake5 gmake2` | Dual | `.so` + `.wasm` resources |
+| `premake5 gmake2 --native` | Native only | `.so` resources |
+| `premake5 gmake2 --wasm` | WASM only | `.wasm` resources |
+
+### Duel mode
+
+Build wasmtime first (one-time):
+
+```bash
 cargo build --release -p wasmtime-c-api \
   --target x86_64-unknown-linux-musl \
   --manifest-path vendor/wasmtime/Cargo.toml
 ```
 
 Generate and build:
+
+```bash
+premake5 gmake2
+cd build && make -f citizen-scripting-cpp.make config=release \
+  CC="zig cc -target x86_64-linux-musl" \
+  CXX="zig c++ -target x86_64-linux-musl" \
+  -j$(nproc)
+```
+
+### Native mode
+
+No wasmtime or Rust toolchain required:
+
+```bash
+premake5 gmake2 --native
+cd build && make -f citizen-scripting-cpp.make config=release \
+  CC="zig cc -target x86_64-linux-musl" \
+  CXX="zig c++ -target x86_64-linux-musl" \
+  -j$(nproc)
+```
+
+### WebAssembly Mode
+
+wasmtime needs to be built first, then:
 
 ```bash
 premake5 gmake2 --wasm
@@ -128,7 +168,7 @@ git clone https://github.com/bd53/citizen-scripting-cpp.git
 
 - dlopen() failed: symbol not found when the server starts
 
-  The `.so` was compiled against a different set of symbols than what the server expects. 
+  The `.so` was compiled against a different set of symbols than what the server expects.
 
   Make sure you're building with the musl toolchain (`zig cc -target x86_64-linux-musl`) when targeting FXServer, which is also a musl binary.
 

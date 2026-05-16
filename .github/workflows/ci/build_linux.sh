@@ -17,7 +17,7 @@ cargo build --release -p wasmtime-c-api \
 
 echo "Building runtime..."
 python3 tools/code-gen/build.py
-premake5 gmake2 --wasm
+premake5 gmake2
 make -C build config=release \
     CC="zig cc -target x86_64-linux-musl" \
     CXX="zig c++ -target x86_64-linux-musl" \

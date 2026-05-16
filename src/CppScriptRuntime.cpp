@@ -9,11 +9,14 @@
 #include <climits>
 #include <vector>
 
-#include <dlfcn.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/stat.h>
+
+#ifdef FXCPP_NATIVE_SUPPORT
+#include <dlfcn.h>
+#include <fcntl.h>
 #include <sys/wait.h>
+#endif
 
 using namespace fx::cpp;
 
@@ -83,6 +86,7 @@ static bool ValidateScriptPath(const char* scriptFile, const std::string& root, 
         return true;
 }
 
+#ifdef FXCPP_NATIVE_SUPPORT
 static bool CopyFileTo(const std::string& src, const std::string& dst)
 {
         FILE* in = fopen(src.c_str(), "rb");
@@ -118,6 +122,7 @@ static bool CopyFileTo(const std::string& src, const std::string& dst)
                 std::remove(dst.c_str());
         return ok;
 }
+#endif
 
 #ifdef FXCPP_WASM_SUPPORT
 
@@ -890,7 +895,7 @@ static wasm_trap_t* cb_poll_worker(void* env, wasmtime_caller_t* caller, const w
         if (state->thread.joinable())
                 state->thread.join();
         rt->m_workers.erase(it);
-        results[0] = i32val(written > 0 ? written : 1); // at least 1 to signaal done
+        results[0] = i32val(written > 0 ? written : 1); // at least 1 to signal done
         return nullptr;
 }
 
@@ -939,6 +944,7 @@ result_t OM_DECL CppScriptRuntime::Destroy()
                 }
                 m_bookmarkHost = { };
         }
+#ifdef FXCPP_NATIVE_SUPPORT
         if (m_mode == Mode::SharedLib)
         {
                 if (m_ctx)
@@ -978,8 +984,9 @@ result_t OM_DECL CppScriptRuntime::Destroy()
                 }
                 cleanupTemp();
         }
+#endif
 #ifdef FXCPP_WASM_SUPPORT
-        else if (m_mode == Mode::Wasm)
+        if (m_mode == Mode::Wasm)
         {
                 if (m_hasStopFn)
                 {
@@ -1010,7 +1017,7 @@ uint64_t CppScriptRuntime::nextBoundaryId()
         return id;
 }
 
-int32_t CppScriptRuntime::AddFuncRef(fx::RefCallback cb)
+int32_t CppScriptRuntime::allocRefIdx()
 {
         uint32_t idx = m_nextRefIdx;
         uint32_t start = idx;
@@ -1024,10 +1031,19 @@ int32_t CppScriptRuntime::AddFuncRef(fx::RefCallback cb)
         m_nextRefIdx = idx + 1;
         if (m_nextRefIdx == 0)
                 m_nextRefIdx = 1;
-        m_refs[static_cast<int32_t>(idx)] = std::move(cb);
         return static_cast<int32_t>(idx);
 }
 
+int32_t CppScriptRuntime::AddFuncRef(fx::RefCallback cb)
+{
+        int32_t idx = allocRefIdx();
+        if (idx < 0)
+                return -1;
+        m_refs[idx] = std::move(cb);
+        return idx;
+}
+
+#ifdef FXCPP_NATIVE_SUPPORT
 void CppScriptRuntime::cleanupTemp()
 {
         if (!m_tempLibPath.empty())
@@ -1172,6 +1188,7 @@ result_t CppScriptRuntime::loadSharedLib(const std::string& resolvedPath)
         }
         return FX_S_OK;
 }
+#endif
 
 #ifdef FXCPP_WASM_SUPPORT
 
@@ -1580,6 +1597,7 @@ result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
 
 result_t OM_DECL CppScriptRuntime::Tick()
 {
+#ifdef FXCPP_NATIVE_SUPPORT
         if (m_mode == Mode::SharedLib)
         {
                 if (!m_ctx || !m_ctx->hasPendingWork())
@@ -1599,8 +1617,9 @@ result_t OM_DECL CppScriptRuntime::Tick()
                         m_ctx->trace("SCRIPT ERROR: @%s: Unhandled non-standard exception in tick\n", m_resourceName.c_str());
                 }
         }
+#endif
 #ifdef FXCPP_WASM_SUPPORT
-        else if (m_mode == Mode::Wasm)
+        if (m_mode == Mode::Wasm)
         {
                 if (!m_hasTickFn)
                         return FX_S_OK;
@@ -1626,6 +1645,7 @@ result_t OM_DECL CppScriptRuntime::Tick()
 
 result_t OM_DECL CppScriptRuntime::TickBookmarks(uint64_t* bookmarks, int32_t numBookmarks)
 {
+#ifdef FXCPP_NATIVE_SUPPORT
         if (m_mode == Mode::SharedLib)
         {
                 if (!m_ctx || numBookmarks <= 0)
@@ -1634,8 +1654,9 @@ result_t OM_DECL CppScriptRuntime::TickBookmarks(uint64_t* bookmarks, int32_t nu
                 BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
                 m_ctx->resumeBookmarks(bookmarks, numBookmarks);
         }
+#endif
 #ifdef FXCPP_WASM_SUPPORT
-        else if (m_mode == Mode::Wasm)
+        if (m_mode == Mode::Wasm)
         {
                 if (!m_hasTickBookmarksFn || numBookmarks <= 0)
                         return FX_S_OK;
@@ -1676,6 +1697,7 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
 {
         if (!eventName)
                 return FX_S_OK;
+#ifdef FXCPP_NATIVE_SUPPORT
         if (m_mode == Mode::SharedLib)
         {
                 if (!m_ctx)
@@ -1698,8 +1720,9 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
                         m_ctx->trace("SCRIPT ERROR: @%s: Unhandled non-standard exception in event '%s'\n", m_resourceName.c_str(), eventName);
                 }
         }
+#endif
 #ifdef FXCPP_WASM_SUPPORT
-        else if (m_mode == Mode::Wasm)
+        if (m_mode == Mode::Wasm)
         {
                 if (!m_hasEventFn)
                         return FX_S_OK;
@@ -1783,20 +1806,11 @@ result_t OM_DECL CppScriptRuntime::DuplicateRef(int32_t refIdx, int32_t* newRefI
         auto it = m_refs.find(refIdx);
         if (it == m_refs.end())
                 return FX_E_INVALIDARG;
-        uint32_t idx = m_nextRefIdx;
-        uint32_t start = idx;
-        while (m_refs.count(static_cast<int32_t>(idx)))
-        {
-                if (++idx == 0)
-                        idx = 1;
-                if (idx == start)
-                        return FX_E_INVALIDARG;
-        }
-        m_nextRefIdx = idx + 1;
-        if (m_nextRefIdx == 0)
-                m_nextRefIdx = 1;
-        *newRefIdx = static_cast<int32_t>(idx);
-        m_refs[*newRefIdx] = it->second;
+        int32_t idx = allocRefIdx();
+        if (idx < 0)
+                return FX_E_INVALIDARG;
+        *newRefIdx = idx;
+        m_refs[idx] = it->second;
 #ifdef FXCPP_WASM_SUPPORT
         if (m_mode == Mode::Wasm)
         {
@@ -1833,8 +1847,10 @@ int32_t OM_DECL CppScriptRuntime::HandlesFile(char* scriptFile, IScriptHostWithR
         if (!scriptFile)
                 return 0;
         std::string_view file(scriptFile);
+#ifdef FXCPP_NATIVE_SUPPORT
         if (file.ends_with(".so"))
                 return 1;
+#endif
 #ifdef FXCPP_WASM_SUPPORT
         if (file.ends_with(".wasm"))
                 return 1;
@@ -1871,6 +1887,7 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
         if (file.ends_with(".wasm"))
                 return loadWasm(resolvedPath);
 #endif
+#ifdef FXCPP_NATIVE_SUPPORT
         std::string allowed = GetConvar(m_host.GetRef(), "sv_allowNativeCode", "false");
         if (allowed != "true" && allowed != "1")
         {
@@ -1878,6 +1895,10 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                 return FX_E_INVALIDARG;
         }
         return loadSharedLib(resolvedPath);
+#else
+        fprintf(stderr, "[citizen-scripting-cpp] Native .so loading not supported in this build for '%s'\n", m_resourceName.c_str());
+        return FX_E_INVALIDARG;
+#endif
 }
 
 result_t OM_DECL CppScriptRuntime::WalkStack(char*, uint32_t, char*, uint32_t, IScriptStackWalkVisitor*)

@@ -47,11 +47,8 @@ struct Value
                 snprintf(buf, sizeof(buf), "%g", v);
                 scalar = buf;
         }
-        Value(float v) : kind(Kind::Number)
+        Value(float v) : Value(static_cast<double>(v))
         {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%g", static_cast<double>(v));
-                scalar = buf;
         }
         Value(bool b) : kind(Kind::Bool), scalar(b ? "true" : "false")
         {
@@ -136,6 +133,28 @@ struct Reader
                 std::string s((const char*)p, n);
                 p += n;
                 return s;
+        }
+        Value skipMap(uint32_t n, int d)
+        {
+                for (uint32_t i = 0; i < n; ++i)
+                {
+                        read(d + 1);
+                        read(d + 1);
+                }
+                return { };
+        }
+        Value readExt(uint32_t n)
+        {
+                uint8_t t = u8();
+                if (t == 10)
+                {
+                        Value v;
+                        v.kind = Value::Kind::FuncRef;
+                        v.scalar = str(n);
+                        return v;
+                }
+                p += n;
+                return { };
         }
         Value read(int d = 0)
         {
@@ -312,65 +331,16 @@ struct Reader
                         }
                         // ext8/ext16/ext32
                         case 0xC7:
-                        {
-                                uint32_t n = u8();
-                                uint8_t t = u8();
-                                if (t == 10)
-                                {
-                                        v.kind = Value::Kind::FuncRef;
-                                        v.scalar = str(n);
-                                        return v;
-                                }
-                                p += n;
-                                return { };
-                        }
+                                return readExt(u8());
                         case 0xC8:
-                        {
-                                uint32_t n = u16();
-                                uint8_t t = u8();
-                                if (t == 10)
-                                {
-                                        v.kind = Value::Kind::FuncRef;
-                                        v.scalar = str(n);
-                                        return v;
-                                }
-                                p += n;
-                                return { };
-                        }
+                                return readExt(u16());
                         case 0xC9:
-                        {
-                                uint32_t n = u32();
-                                uint8_t t = u8();
-                                if (t == 10)
-                                {
-                                        v.kind = Value::Kind::FuncRef;
-                                        v.scalar = str(n);
-                                        return v;
-                                }
-                                p += n;
-                                return { };
-                        }
+                                return readExt(u32());
                         // map16/map32
                         case 0xDE:
-                        {
-                                uint32_t n = u16();
-                                for (uint32_t i = 0; i < n; ++i)
-                                {
-                                        read(d + 1);
-                                        read(d + 1);
-                                }
-                                return { };
-                        }
+                                return skipMap(u16(), d);
                         case 0xDF:
-                        {
-                                uint32_t n = u32();
-                                for (uint32_t i = 0; i < n; ++i)
-                                {
-                                        read(d + 1);
-                                        read(d + 1);
-                                }
-                                return { };
-                        }
+                                return skipMap(u32(), d);
                         default:
                                 return { };
                 }
@@ -800,9 +770,6 @@ __attribute__((import_module("fxcpp"), import_name("schedule_bookmark"))) void _
 __attribute__((import_module("fxcpp"), import_name("is_manifest_version_v2_between"))) int32_t __fxcpp_is_manifest_version_v2_between(const char* lower, uint32_t lower_len, const char* upper, uint32_t upper_len);
 }
 
-#if __cpp_exceptions
-#endif
-
 namespace fxw_internal
 {
 
@@ -833,6 +800,17 @@ struct Context
         std::unordered_map<int32_t, TimerEntry> timers;
         int32_t nextTimerId = 1;
         std::unordered_map<int32_t, int32_t> stateBagHandlerRefs; // cookie -> hostRef
+        int32_t addTimer(uint32_t ms, uint32_t intervalMs, std::function<void()> cb)
+        {
+                if (timers.size() >= 8192)
+                        return -1;
+                int32_t id = nextTimerId;
+                if (++nextTimerId <= 0)
+                        nextTimerId = 1;
+                auto fire = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+                timers[id] = { id, fire, intervalMs, std::move(cb) };
+                return id;
+        }
         void dispatchTick()
         {
                 auto now = std::chrono::steady_clock::now();
@@ -1810,31 +1788,13 @@ namespace fx
 inline int32_t setTimeout(uint32_t ms, std::function<void()> cb)
 {
         auto* c = fxw_internal::currentContext();
-        if (!c)
-                return -1;
-        if (c->timers.size() >= 8192)
-                return -1;
-        int32_t id = c->nextTimerId;
-        if (++c->nextTimerId <= 0)
-                c->nextTimerId = 1;
-        auto fire = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-        c->timers[id] = { id, fire, 0, std::move(cb) };
-        return id;
+        return c ? c->addTimer(ms, 0, std::move(cb)) : -1;
 }
 
 inline int32_t setInterval(uint32_t ms, std::function<void()> cb)
 {
         auto* c = fxw_internal::currentContext();
-        if (!c)
-                return -1;
-        if (c->timers.size() >= 8192)
-                return -1;
-        int32_t id = c->nextTimerId;
-        if (++c->nextTimerId <= 0)
-                c->nextTimerId = 1;
-        auto fire = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-        c->timers[id] = { id, fire, ms, std::move(cb) };
-        return id;
+        return c ? c->addTimer(ms, ms, std::move(cb)) : -1;
 }
 
 inline void clearTimer(int32_t id)
@@ -1907,9 +1867,6 @@ inline std::vector<std::string> findKvp(const std::string& prefix)
 }
 
 }
-
-#if __cpp_exceptions
-#endif
 
 namespace fxw_internal
 {

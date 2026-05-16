@@ -9,7 +9,10 @@ OUT_DIR="$BUILD_DIR/bin/Release"
 MUSL_TARGET="x86_64-unknown-linux-musl"
 
 usage() {
-    echo "Usage: $0 --type <native|wasm>" >&2
+    echo "Usage: $0 [--type <native|wasm>]" >&2
+    echo "  No flags = dual mode (native + wasm)" >&2
+    echo "  --type native = native only" >&2
+    echo "  --type wasm = wasm only" >&2
     exit 1
 }
 
@@ -22,11 +25,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -z "$BUILD_TYPE" ]] && usage
-[[ "$BUILD_TYPE" != "native" && "$BUILD_TYPE" != "wasm" ]] && {
+if [[ -n "$BUILD_TYPE" && "$BUILD_TYPE" != "native" && "$BUILD_TYPE" != "wasm" ]]; then
     echo "Error: unknown build type '$BUILD_TYPE' (expected 'native' or 'wasm')" >&2
     exit 1
-}
+fi
 
 bootstrap() {
     local lib="$PROJECT_DIR/vendor/wasmtime/target/$MUSL_TARGET/release/libwasmtime.a"
@@ -41,7 +43,13 @@ bootstrap() {
 build_runtime() {
     rm -rf "$BUILD_DIR"
     python3 tools/code-gen/build.py
-    premake5 gmake2 --wasm
+    local premake_args=""
+    if [[ "$BUILD_TYPE" == "native" ]]; then
+        premake_args="--native"
+    elif [[ "$BUILD_TYPE" == "wasm" ]]; then
+        premake_args="--wasm"
+    fi
+    premake5 gmake2 $premake_args
     echo "Building runtime..."
     make -C "$BUILD_DIR" config=release \
         CC="zig cc -target x86_64-linux-musl" \
@@ -60,24 +68,61 @@ build_wasm_resource() {
         -o "$OUT_DIR/server.wasm"
 }
 
+build_native_resource() {
+    echo "Compiling example resource to native..."
+    zig c++ -target x86_64-linux-musl -std=c++23 -O2 -shared -fPIC -fvisibility=hidden \
+        -I"$PROJECT_DIR" \
+        "$PROJECT_DIR/tools/example/server.cpp" \
+        -o "$OUT_DIR/server.so"
+}
+
 deploy() {
     cp "$OUT_DIR/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
     rm -rf "$RESOURCE_DIR"
     mkdir -p "$RESOURCE_DIR"
+    cp "$PROJECT_DIR/tools/example/server.cpp" "$RESOURCE_DIR/server.cpp"
     if [[ "$BUILD_TYPE" == "wasm" ]]; then
         cp "$OUT_DIR/server.wasm" "$RESOURCE_DIR/server.wasm"
-        cp "$PROJECT_DIR/tools/example/server.cpp" "$RESOURCE_DIR/server.cpp"
         sed 's/server\.so/server.wasm/' "$PROJECT_DIR/tools/example/fxmanifest.lua" > "$RESOURCE_DIR/fxmanifest.lua"
     elif [[ "$BUILD_TYPE" == "native" ]]; then
         cp "$OUT_DIR/server.so" "$RESOURCE_DIR/server.so"
-        cp -a "$PROJECT_DIR/tools/example/." "$RESOURCE_DIR/"
+        cp "$PROJECT_DIR/tools/example/fxmanifest.lua" "$RESOURCE_DIR/fxmanifest.lua"
+    else
+        # Dual: deploy both
+        cp "$OUT_DIR/server.so" "$RESOURCE_DIR/server.so"
+        cp "$PROJECT_DIR/tools/example/fxmanifest.lua" "$RESOURCE_DIR/fxmanifest.lua"
     fi
 }
 
 cd "$PROJECT_DIR"
-bootstrap
+
+if [[ "$BUILD_TYPE" != "native" ]]; then
+    bootstrap
+fi
+
 build_runtime
-[[ "$BUILD_TYPE" == "wasm" ]] && build_wasm_resource
+
+RESOURCE_TYPE="$BUILD_TYPE"
+if [[ -z "$RESOURCE_TYPE" ]]; then
+    echo ""
+    echo "Compile example resource as:"
+    echo "  1) native"
+    echo "  2) wasm"
+    read -rp "Select [1/2]: " choice
+    case "$choice" in
+        1) RESOURCE_TYPE="native" ;;
+        2) RESOURCE_TYPE="wasm" ;;
+        *) echo "Invalid choice"; exit 1 ;;
+    esac
+fi
+
+if [[ "$RESOURCE_TYPE" == "wasm" ]]; then
+    build_wasm_resource
+else
+    build_native_resource
+fi
+
+BUILD_TYPE="$RESOURCE_TYPE"
 deploy
 
 echo "Done. Runtime -> $SERVER_DIR, resource -> $RESOURCE_DIR"

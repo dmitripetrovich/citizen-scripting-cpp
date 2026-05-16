@@ -2,8 +2,78 @@
 
 #include "Local.h"
 
+#include <cstring>
+#include <functional>
 #include <mutex>
+#include <string>
 #include <vector>
+
+#include <unistd.h>
+#include <sys/wait.h>
+
+namespace fx
+{
+
+using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
+using AddRefFn = std::function<int32_t(RefCallback)>;
+using RemoveRefFn = std::function<void(int32_t)>;
+using ScheduleBookmarkFn = std::function<void(uint64_t, int64_t)>;
+
+struct ProcessResult
+{
+        int32_t status;
+        std::string output;
+};
+
+inline ProcessResult spawnProcess(const std::string& command)
+{
+        ProcessResult result{ };
+        int pipefd[2];
+        if (pipe(pipefd) < 0)
+        {
+                result.status = -2;
+                return result;
+        }
+        std::vector<std::string> envStrs;
+        std::vector<char*> envp;
+        for (char** e = environ; e && *e; ++e)
+                if (strncmp(*e, "LD_LIBRARY_PATH=", 16) != 0)
+                        envStrs.push_back(*e);
+        for (auto& s : envStrs)
+                envp.push_back(s.data());
+        envp.push_back(nullptr);
+        pid_t pid = fork();
+        if (pid < 0)
+        {
+                close(pipefd[0]);
+                close(pipefd[1]);
+                result.status = -2;
+                return result;
+        }
+        if (pid == 0)
+        {
+                close(pipefd[0]);
+                dup2(pipefd[1], STDOUT_FILENO);
+                dup2(pipefd[1], STDERR_FILENO);
+                close(pipefd[1]);
+                execle("/bin/sh", "sh", "-c", command.c_str(), nullptr, envp.data());
+                _exit(127);
+        }
+        close(pipefd[1]);
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(pipefd[0], buf, sizeof(buf))) > 0)
+                result.output.append(buf, static_cast<size_t>(n));
+        close(pipefd[0]);
+        int wstatus = 0;
+        waitpid(pid, &wstatus, 0);
+        while (!result.output.empty() && result.output.back() == '\n')
+                result.output.pop_back();
+        result.status = static_cast<int32_t>(result.output.size());
+        return result;
+}
+
+}
 
 FX_DEFINE_GUID(IID_fxIStream, 0x82EC2441, 0xDBB4, 0x4512, 0x81, 0xE9, 0x3A, 0x98, 0xCE, 0x9F, 0xFC, 0xAB);
 
@@ -130,8 +200,6 @@ class IScriptEventRuntime : public fxIBase
         NS_IMETHOD TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId) = 0;
 };
 
-class IScriptBuffer;
-
 FX_DEFINE_GUID(IID_IScriptRefRuntime, 0xA2F1B24B, 0xA29F, 0x4121, 0x81, 0x62, 0x86, 0x90, 0x1E, 0xCA, 0x80, 0x97);
 
 class IScriptRefRuntime : public fxIBase
@@ -235,26 +303,27 @@ class IScriptRuntimeHandler : public fxIBase
 namespace fx
 {
 
+inline fx::OMPtr<IScriptRuntimeHandler> GetRuntimeHandler()
+{
+        static fx::OMPtr<IScriptRuntimeHandler> h;
+        static std::once_flag flag;
+        std::call_once(flag, []
+        {
+                fx::MakeInterface(&h, CLSID_ScriptRuntimeHandler);
+        });
+        return h;
+}
+
 class PushEnvironment
 {
         fx::OMPtr<IScriptRuntimeHandler> m_handler;
         fx::OMPtr<IScriptRuntime> m_runtime;
-        static fx::OMPtr<IScriptRuntimeHandler> GetHandler()
-        {
-                static fx::OMPtr<IScriptRuntimeHandler> h;
-                static std::once_flag flag;
-                std::call_once(flag, []
-                {
-                        fx::MakeInterface(&h, CLSID_ScriptRuntimeHandler);
-                });
-                return h;
-        }
 
     public:
         PushEnvironment() = default;
         explicit PushEnvironment(IScriptRuntime* rt)
         {
-                m_handler = GetHandler();
+                m_handler = GetRuntimeHandler();
                 if (!m_handler.GetRef())
                         return;
                 m_runtime = fx::OMPtr<IScriptRuntime>(rt);
@@ -284,12 +353,7 @@ class PushEnvironment
 
 inline result_t GetCurrentScriptRuntime(fx::OMPtr<IScriptRuntime>* out)
 {
-        static fx::OMPtr<IScriptRuntimeHandler> h;
-        static std::once_flag flag;
-        std::call_once(flag, []
-        {
-                fx::MakeInterface(&h, CLSID_ScriptRuntimeHandler);
-        });
+        auto h = GetRuntimeHandler();
         if (!h.GetRef())
                 return FX_E_NOTIMPL;
         return h->GetCurrentRuntime(out->ReleaseAndGetAddressOf());
