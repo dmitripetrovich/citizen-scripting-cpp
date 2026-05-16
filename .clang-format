@@ -25,6 +25,7 @@ ConstructorInitializerIndentWidth: 4
 SortIncludes: false
 SpaceAfterTemplateKeyword: false
 SpaceBeforeCpp11BracedList: false
+SpaceInEmptyBlock: true
 TabWidth: 8
 IndentWidth: 8
 UseTab: Never
