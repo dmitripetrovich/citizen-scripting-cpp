@@ -12,6 +12,7 @@ project "citizen-scripting-cpp"
         targetname "citizen-scripting-cpp"
         targetprefix "lib"
         files {
+                "src/CppComponentHost.cpp",
                 "src/CppScriptRuntime.cpp",
                 "src/Component.cpp",
         }

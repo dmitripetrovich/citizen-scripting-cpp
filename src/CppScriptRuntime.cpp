@@ -19,33 +19,6 @@ static constexpr uint32_t WORKER_RESULT_BUF_SIZE = 65536;
 static constexpr int WORKER_SHUTDOWN_ATTEMPTS = 50;
 static constexpr int WORKER_SHUTDOWN_INTERVAL_MS = 100;
 
-extern "C" intptr_t CoreFxFindFirstImpl(const guid_t& iid, guid_t* clsid);
-extern "C" int32_t CoreFxFindNextImpl(intptr_t handle, guid_t* clsid);
-extern "C" void CoreFxFindImplClose(intptr_t handle);
-extern "C" result_t CoreFxCreateObjectInstance(const guid_t& guid, const guid_t& iid, void** objectRef);
-
-extern "C" intptr_t fxFindFirstImpl(const guid_t& iid, guid_t* clsid)
-{
-        return CoreFxFindFirstImpl(iid, clsid);
-}
-
-extern "C" int32_t fxFindNextImpl(intptr_t handle, guid_t* clsid)
-{
-        return CoreFxFindNextImpl(handle, clsid);
-}
-
-extern "C" void fxFindImplClose(intptr_t handle)
-{
-        CoreFxFindImplClose(handle);
-}
-
-extern "C" result_t fxCreateObjectInstance(const guid_t& guid, const guid_t& iid, void** objectRef)
-{
-        return CoreFxCreateObjectInstance(guid, iid, objectRef);
-}
-
-OMFactoryDef* OMFactoryDef::s_factories = nullptr;
-OMImplementsDef* OMImplementsDef::s_impls = nullptr;
 
 static std::string GetResourcePath(IScriptHost* host)
 {
@@ -187,25 +160,32 @@ struct WasmMem
         bool check(uint32_t offset, size_t len) const { return InBounds(sz, offset, len); }
 };
 
+static std::string ExtractWasmError(wasmtime_error_t* err, wasm_trap_t* trap)
+{
+        wasm_name_t msg{ };
+        if (err)
+        {
+                wasmtime_error_message(err, &msg);
+                wasmtime_error_delete(err);
+        }
+        else if (trap)
+        {
+                wasm_trap_message(trap, &msg);
+                wasm_trap_delete(trap);
+        }
+        std::string out(msg.data, msg.size);
+        wasm_byte_vec_delete(&msg);
+        return out;
+}
+
 static bool WasmCall(wasmtime_store_t* store, const wasmtime_func_t& fn, const wasmtime_val_t* args, size_t nargs, wasmtime_val_t* results, size_t nresults, const char* resourceName, const char* label)
 {
         wasm_trap_t* trap = nullptr;
         auto* err = wasmtime_func_call(wasmtime_store_context(store), &fn, args, nargs, results, nresults, &trap);
         if (err || trap)
         {
-                wasm_name_t msg{ };
-                if (err)
-                {
-                        wasmtime_error_message(err, &msg);
-                        wasmtime_error_delete(err);
-                }
-                else
-                {
-                        wasm_trap_message(trap, &msg);
-                        wasm_trap_delete(trap);
-                }
-                fprintf(stderr, "\033[31m[%s] %s:\033[0m %.*s\n", resourceName, label, static_cast<int>(msg.size), msg.data);
-                wasm_byte_vec_delete(&msg);
+                auto msg = ExtractWasmError(err, trap);
+                fprintf(stderr, "\033[31m[%s] %s:\033[0m %s\n", resourceName, label, msg.c_str());
                 return false;
         }
         return true;
@@ -746,21 +726,12 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
         }
         std::string fnName(reinterpret_cast<const char*>(mem.base + fnPtr), fnLen);
         std::vector<char> inputData(mem.base + inPtr, mem.base + inPtr + inLen);
-        int32_t workerId = rt->m_nextWorkerId;
-        int32_t startId = workerId;
-        while (rt->m_workers.count(workerId))
+        int32_t workerId = fx::allocateId(rt->m_nextWorkerId, rt->m_workers);
+        if (workerId < 0)
         {
-                if (++workerId <= 0)
-                        workerId = 1;
-                if (workerId == startId)
-                {
-                        results[0] = I32Val(-3);
-                        return nullptr;
-                }
+                results[0] = I32Val(-3);
+                return nullptr;
         }
-        rt->m_nextWorkerId = workerId + 1;
-        if (rt->m_nextWorkerId <= 0)
-                rt->m_nextWorkerId = 1;
         auto state = std::make_shared<CppScriptRuntime::WorkerState>();
         rt->m_workers[workerId] = state;
         wasmtime_module_t* mod = rt->wasmModule();
@@ -1004,19 +975,7 @@ uint64_t CppScriptRuntime::nextBoundaryId()
 
 int32_t CppScriptRuntime::allocRefIdx()
 {
-        uint32_t idx = m_nextRefIdx;
-        uint32_t start = idx;
-        while (m_refs.count(static_cast<int32_t>(idx)))
-        {
-                if (++idx == 0)
-                        idx = 1;
-                if (idx == start)
-                        return -1;
-        }
-        m_nextRefIdx = idx + 1;
-        if (m_nextRefIdx == 0)
-                m_nextRefIdx = 1;
-        return static_cast<int32_t>(idx);
+        return fx::allocateId(m_nextRefIdx, m_refs);
 }
 
 int32_t CppScriptRuntime::AddFuncRef(fx::RefCallback cb)
@@ -1068,20 +1027,7 @@ void CppScriptRuntime::scheduleWasmBookmark(int32_t wasmId, int32_t deadlineMs)
 
 std::string CppScriptRuntime::wasmErrMsg(wasmtime_error_t* err, wasm_trap_t* trap)
 {
-        wasm_name_t msg{ };
-        if (err)
-        {
-                wasmtime_error_message(err, &msg);
-                wasmtime_error_delete(err);
-        }
-        else if (trap)
-        {
-                wasm_trap_message(trap, &msg);
-                wasm_trap_delete(trap);
-        }
-        std::string out(msg.data, msg.size);
-        wasm_byte_vec_delete(&msg);
-        return out;
+        return ExtractWasmError(err, trap);
 }
 
 uint8_t* CppScriptRuntime::wasmBase()
@@ -1424,9 +1370,10 @@ result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
         }
         {
                 char buf[512];
+                snprintf(buf, sizeof(buf), "WebAssembly '%s' loaded into the C++ runtime (beta: expect crashes and breaking changes).", m_resourceName.c_str());
                 if (m_host.GetRef())
                         m_host->ScriptTrace(buf);
-                LogWarning("WebAssembly '%s' has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.", m_resourceName.c_str());
+                LogWarning("%s", buf);
         }
         return FX_S_OK;
 }
