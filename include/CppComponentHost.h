@@ -437,7 +437,7 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
 {
         ProcessResult result{ };
         int pipefd[2];
-        if (pipe(pipefd) < 0)
+        if (pipe2(pipefd, O_CLOEXEC) < 0)
         {
                 result.status = -2;
                 return result;

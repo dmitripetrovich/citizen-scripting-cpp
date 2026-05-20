@@ -201,7 +201,7 @@ static void SanitizeTraceMsg(std::string& msg)
         for (size_t i = 0; i < msg.size(); ++i)
         {
                 unsigned char c = static_cast<unsigned char>(msg[i]);
-                if (c == '\n' || c == '\t' || (c >= 0x20 && c != 0x7F))
+                if (c == '\n' || c == '\t' || (c >= 0x20 && c != 0x1B && c != 0x7F))
                 {
                         if (c == 0xE2 && i + 2 < msg.size())
                         {
@@ -941,6 +941,8 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                         return;
                 }
                 int32_t resultLen = callResult[0].of.i32;
+                if (resultLen > static_cast<int32_t>(resultBufSize))
+                        resultLen = static_cast<int32_t>(resultBufSize);
                 {
                         std::lock_guard<std::mutex> lk(state->mutex);
                         if (resultLen > 0 && hasMem)
@@ -1375,8 +1377,8 @@ void CppScriptRuntime::destroyWasm()
                         w->thread.join();
                 else
                 {
-                        LogWarning("Worker %d in '%s' did not finish within %ds, force joining", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
-                        w->thread.join();
+                        LogWarning("Worker %d in '%s' did not finish within %ds, detaching", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
+                        w->thread.detach();
                 }
         }
         m_workers.clear();
