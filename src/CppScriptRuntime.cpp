@@ -511,6 +511,46 @@ static wasm_trap_t* CbCopyStringResult(void* env, wasmtime_caller_t* caller, con
         return nullptr;
 }
 
+static wasm_trap_t* CbCopyBinaryResult(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
+{
+	auto* rt = static_cast<CppScriptRuntime*>(env);
+	if (!rt->m_hasValidNativeResult)
+	{
+		results[0] = I32Val(0);
+		return nullptr;
+	}
+	WasmMem mem;
+	if (!mem.init(caller))
+	{
+		results[0] = I32Val(0);
+		return nullptr;
+	}
+	int32_t ptrIdx = args[1].of.i32;
+	int32_t sizeIdx = args[2].of.i32;
+	uint32_t bufPtr = ArgU32(args[3]);
+	int32_t bufMax = args[4].of.i32;
+	if (ptrIdx < 0 || ptrIdx >= 32 || sizeIdx < 0 || sizeIdx >= 32)
+	{
+		results[0] = I32Val(0);
+		return nullptr;
+	}
+	const void* data = reinterpret_cast<const void*>(rt->m_lastNativeCtx.arguments[ptrIdx]);
+	if (!data)
+	{
+		results[0] = I32Val(0);
+		return nullptr;
+	}
+	static constexpr size_t MAX_BINARY_RESULT = 1u << 24;
+	size_t dataSize = static_cast<size_t>(rt->m_lastNativeCtx.arguments[sizeIdx]);
+	if (dataSize > MAX_BINARY_RESULT)
+		dataSize = MAX_BINARY_RESULT;
+	size_t copy = (bufMax > 0) ? std::min<size_t>(dataSize, static_cast<size_t>(bufMax)) : 0;
+	if (copy && mem.check(bufPtr, copy))
+		memcpy(mem.base + bufPtr, data, copy);
+	results[0] = I32Val(static_cast<int32_t>(dataSize));
+	return nullptr;
+}
+
 static wasm_trap_t* CbEmitEvent(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
 {
         auto* rt = static_cast<CppScriptRuntime*>(env);
@@ -887,6 +927,7 @@ static const ImportDesc g_imports[] = {
         { "trace", { WASM_I32, WASM_I32 }, { }, CbTrace },
         { "invoke_native", { WASM_I32 }, { }, CbInvokeNative },
         { "copy_string_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyStringResult },
+        { "copy_binary_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyBinaryResult },
         { "emit_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitEvent },
         { "emit_net_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitNetEvent },
         { "cancel_event", { }, { }, CbCancelEvent },
@@ -1551,6 +1592,8 @@ void CppScriptRuntime::destroyWasm()
 
 result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const std::string& sourcePath)
 {
+        if (m_store)
+                destroyWasm();
         m_store = wasmtime_store_new(engine(), this, nullptr);
         wasmtime_store_limiter(m_store, WASM_MEMORY_LIMIT, -1, -1, -1, -1);
         m_linker = wasmtime_linker_new(engine());

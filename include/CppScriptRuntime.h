@@ -1291,6 +1291,7 @@ extern "C" {
         __attribute__((import_module("cfx"), import_name("trace"))) void __cfxTrace(const char* ptr, uint32_t len);
         __attribute__((import_module("cfx"), import_name("invoke_native"))) void __cfxInvokeNative(uint32_t ctx_ptr);
         __attribute__((import_module("cfx"), import_name("copy_string_result"))) int32_t __cfxCopyStringResult(uint32_t ctx_ptr, int32_t result_idx, char* buf, int32_t buf_max);
+        __attribute__((import_module("cfx"), import_name("copy_binary_result"))) int32_t __cfxCopyBinaryResult(uint32_t ctx_ptr, int32_t ptr_result_idx, int32_t size_result_idx, char* buf, int32_t buf_max);
         __attribute__((import_module("cfx"), import_name("emit_event"))) void __cfxEmitEvent(const char* name, uint32_t name_len, const uint8_t* args, uint32_t args_len);
         __attribute__((import_module("cfx"), import_name("emit_net_event"))) void __cfxEmitNetEvent(const char* name, uint32_t name_len, int32_t target, const uint8_t* args, uint32_t args_len);
         __attribute__((import_module("cfx"), import_name("cancel_event"))) void __cfxCancelEvent();
@@ -1614,6 +1615,16 @@ inline std::string getStringResult(NativeCtx& ctx, int32_t resultIdx)
         std::string out(static_cast<size_t>(len), '\0');
         __cfxCopyStringResult(
         reinterpret_cast<uint32_t>(&ctx), resultIdx, out.data(), len + 1);
+        return out;
+}
+
+inline std::vector<uint8_t> getBinaryResult(NativeCtx& ctx, int32_t ptrResultIdx, int32_t sizeResultIdx)
+{
+        int32_t len = __cfxCopyBinaryResult(reinterpret_cast<uint32_t>(&ctx), ptrResultIdx, sizeResultIdx, nullptr, 0);
+        if (len <= 0)
+                return { };
+        std::vector<uint8_t> out(static_cast<size_t>(len));
+        __cfxCopyBinaryResult(reinterpret_cast<uint32_t>(&ctx), ptrResultIdx, sizeResultIdx, reinterpret_cast<char*>(out.data()), len);
         return out;
 }
 
@@ -2002,12 +2013,11 @@ inline void setGlobalState(const std::string& key, const json::Value& value, boo
 
 inline json::Value getStateBagValue(const std::string& bagName, const std::string& key)
 {
-        auto ctx = invokeNative(HashString("GET_STATE_BAG_VALUE"), { NativeArg::ptr(bagName.c_str()), NativeArg::ptr(key.c_str()) }, 2);
-        uintptr_t dataAddr = static_cast<uintptr_t>(ctx.args[0]);
-        size_t size = static_cast<size_t>(ctx.args[1]);
-        if (!dataAddr || size == 0)
+        auto ctx = invokeNative(HashString("GET_STATE_BAG_VALUE"), { NativeArg::ptr(bagName.c_str()), NativeArg::ptr(key.c_str()) }, 2, 0x1);
+        auto data = getBinaryResult(ctx, 0, 1);
+        if (data.empty())
                 return json::makeNull();
-        return fxw_internal::decode(reinterpret_cast<const void*>(dataAddr), static_cast<uint32_t>(size));
+        return fxw_internal::decode(data.data(), static_cast<uint32_t>(data.size()));
 }
 
 inline json::Value getPlayerState(int serverId, const std::string& key)
@@ -2033,12 +2043,11 @@ inline bool stateBagHasKey(const std::string& bagName, const std::string& key)
 
 inline std::vector<std::string> getStateBagKeys(const std::string& bagName)
 {
-        auto ctx = invokeNative(HashString("GET_STATE_BAG_KEYS"), { NativeArg::ptr(bagName.c_str()) }, 2);
-        uintptr_t dataAddr = static_cast<uintptr_t>(ctx.args[0]);
-        size_t size = static_cast<size_t>(ctx.args[1]);
-        if (!dataAddr || size == 0)
+        auto ctx = invokeNative(HashString("GET_STATE_BAG_KEYS"), { NativeArg::ptr(bagName.c_str()) }, 2, 0x1);
+        auto data = getBinaryResult(ctx, 0, 1);
+        if (data.empty())
                 return { };
-        auto arr = fxw_internal::decode(reinterpret_cast<const void*>(dataAddr), static_cast<uint32_t>(size));
+        auto arr = fxw_internal::decode(data.data(), static_cast<uint32_t>(data.size()));
         std::vector<std::string> keys;
         for (size_t i = 0; i < arr.size(); i++)
                 keys.push_back(arr.at(i).asStr());
@@ -2667,6 +2676,7 @@ void __cfxRemoveRefCallback(int32_t callback_id)
 
 static wasm_trap_t* CbInvokeNative(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbCopyStringResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbCopyBinaryResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbCancelEvent(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbWasEventCanceled(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbSpawnProcess(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
@@ -2712,6 +2722,7 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
 {
         friend wasm_trap_t* ::CbInvokeNative(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
         friend wasm_trap_t* ::CbCopyStringResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbCopyBinaryResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
         friend wasm_trap_t* ::CbCancelEvent(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
         friend wasm_trap_t* ::CbWasEventCanceled(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
         friend wasm_trap_t* ::CbSpawnProcess(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
