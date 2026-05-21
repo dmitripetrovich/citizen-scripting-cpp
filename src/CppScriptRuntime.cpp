@@ -20,6 +20,8 @@
 using namespace fx::cpp;
 
 static std::atomic<uint32_t> s_nextInstanceId{ 1 };
+static std::mutex s_instanceIdMutex;
+static std::unordered_set<int32_t> s_activeInstanceIds;
 
 static constexpr int64_t WASM_MEMORY_LIMIT = 256 * 1024 * 1024;
 static constexpr uint64_t WASM_FUEL_AMOUNT = 1000000000ULL;
@@ -1208,15 +1210,21 @@ static wasm_trap_t* CbScheduleBookmark(void* env, wasmtime_caller_t*, const wasm
 
 CppScriptRuntime::CppScriptRuntime()
 {
-        uint32_t raw = s_nextInstanceId.fetch_add(1, std::memory_order_relaxed);
-        m_instanceId = static_cast<int32_t>(raw & 0x7FFFFFFFu);
-        if (m_instanceId == 0)
-                m_instanceId = static_cast<int32_t>(s_nextInstanceId.fetch_add(1, std::memory_order_relaxed) & 0x7FFFFFFFu);
+        std::lock_guard<std::mutex> lk(s_instanceIdMutex);
+        int32_t id;
+        do {
+                uint32_t raw = s_nextInstanceId.fetch_add(1, std::memory_order_relaxed);
+                id = static_cast<int32_t>(raw & 0x7FFFFFFFu);
+        } while (id == 0 || s_activeInstanceIds.count(id));
+        s_activeInstanceIds.insert(id);
+        m_instanceId = id;
 }
 
 CppScriptRuntime::~CppScriptRuntime()
 {
         Destroy();
+        std::lock_guard<std::mutex> lk(s_instanceIdMutex);
+        s_activeInstanceIds.erase(m_instanceId);
 }
 
 result_t OM_DECL CppScriptRuntime::Create(IScriptHost* host)
@@ -1430,11 +1438,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
         };
         wasmtime_val_t ret{ };
         if (!WasmCall(m_store, m_fnInvokeRef, a, 5, &ret, 1, m_resourceName.c_str(), "invoke_ref trap"))
-        {
-                wasmFree(argsPtr, argsAllocSz);
-                wasmFree(resultPtr, resultBufMax);
                 return false;
-        }
         wasmFree(argsPtr, argsAllocSz);
         int32_t actualLen = ret.of.i32;
         if (actualLen > 0)
@@ -1735,8 +1739,8 @@ result_t OM_DECL CppScriptRuntime::TickBookmarks(uint64_t* bookmarks, int32_t nu
         fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
         BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
         wasmtime_val_t args[2] = { I32Val(static_cast<int32_t>(arrPtr)), I32Val(static_cast<int32_t>(wasmIds.size())) };
-        WasmCall(m_store, m_fnTickBookmarks, args, 2, nullptr, 0, m_resourceName.c_str(), "tick_bookmarks trap");
-        wasmFree(arrPtr, arrSize);
+        if (WasmCall(m_store, m_fnTickBookmarks, args, 2, nullptr, 0, m_resourceName.c_str(), "tick_bookmarks trap"))
+                wasmFree(arrPtr, arrSize);
         return FX_S_OK;
 }
 
@@ -1781,12 +1785,14 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
                 memcpy(base + argsWasm, argsSerialized, serializedSize);
         memcpy(base + srcWasm, src.data(), src.size());
         base[srcWasm + src.size()] = '\0';
-        if (!callEvent(nameWasm, static_cast<uint32_t>(name.size()), argsWasm, serializedSize, srcWasm, static_cast<uint32_t>(src.size())) && m_host.GetRef())
+        bool eventOk = callEvent(nameWasm, static_cast<uint32_t>(name.size()), argsWasm, serializedSize, srcWasm, static_cast<uint32_t>(src.size()));
+        if (!eventOk && m_host.GetRef())
         {
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in event '" + eventName + "'^7\n";
                 m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
         }
-        wasmFree(block, totalSz);
+        if (eventOk)
+                wasmFree(block, totalSz);
         return FX_S_OK;
 }
 
