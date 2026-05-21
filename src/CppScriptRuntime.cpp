@@ -1690,9 +1690,6 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                         if (!f)
                         {
                                 close(fd);
-                        }
-                        if (!f)
-                        {
                                 LogError("Cannot open '%s'", resolvedPath.c_str());
                                 return FX_E_INVALIDARG;
                         }
