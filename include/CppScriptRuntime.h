@@ -2800,8 +2800,6 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
                 std::vector<char> result;
         };
         static constexpr int32_t MAX_WORKERS_PER_RESOURCE = 8;
-        std::unordered_map<int32_t, std::shared_ptr<WorkerState>> m_workers;
-        int32_t m_nextWorkerId = 1;
         wasmtime_module_t* wasmModule() const
         {
                 return m_module;
@@ -2819,6 +2817,9 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         int32_t m_instanceId = 0;
         bool m_destroyed = false;
         std::string m_resourceName;
+        std::string m_scriptFile;
+        std::unordered_map<int32_t, std::shared_ptr<WorkerState>> m_workers;
+        int32_t m_nextWorkerId = 1;
         std::unordered_map<int32_t, fx::RefCallback> m_refs;
         int32_t m_nextRefIdx = 1;
         int32_t allocRefIdx();

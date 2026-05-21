@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <climits>
+#include <unordered_set>
 #include <vector>
 
 #include <atomic>
@@ -78,6 +79,8 @@ static void Log(LogLevel level, const char* fmt, ...)
 
 #define LogError(...) Log(LogLevel::Error, __VA_ARGS__)
 #define LogWarning(...) Log(LogLevel::Warning, __VA_ARGS__)
+
+static inline char* Mut(const std::string& s) { return const_cast<char*>(s.c_str()); }
 
 static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot)
 {
@@ -330,6 +333,17 @@ static bool WasmCall(wasmtime_store_t* store, const wasmtime_func_t& fn, const w
 
 static void SanitizeTraceMsg(std::string& msg)
 {
+        bool needsScan = false;
+        for (unsigned char c : msg)
+        {
+                if ((c < 0x20 && c != '\n' && c != '\t') || c == 0x7F || c == 0xE2 || c == 0xEF)
+                {
+                        needsScan = true;
+                        break;
+                }
+        }
+        if (!needsScan)
+                return;
         size_t out = 0;
         for (size_t i = 0; i < msg.size(); ++i)
         {
@@ -401,7 +415,7 @@ static wasm_trap_t* CbTrace(void* env, wasmtime_caller_t* caller, const wasmtime
         std::string msg(reinterpret_cast<const char*>(mem.base + ptr), len);
         SanitizeTraceMsg(msg);
         if (rt->host())
-                rt->host()->ScriptTrace(const_cast<char*>(msg.c_str()));
+                rt->host()->ScriptTrace(Mut(msg));
         fprintf(stderr, "\033[36m[script:%s]\033[0m %s", rt->resourceName().c_str(), msg.c_str());
         if (!msg.empty() && msg.back() != '\n')
                 fputc('\n', stderr);
@@ -643,7 +657,7 @@ static wasm_trap_t* CbGetResourceMetadata(void* env, wasmtime_caller_t* caller, 
         if (md)
         {
                 char* val = nullptr;
-                if (FX_SUCCEEDED(md->GetResourceMetaData(const_cast<char*>(key.c_str()), index, &val)) && val)
+                if (FX_SUCCEEDED(md->GetResourceMetaData(Mut(key), index, &val)) && val)
                         value = val;
         }
         size_t valueLen = value.size();
@@ -676,7 +690,7 @@ static wasm_trap_t* CbGetNumResourceMetadata(void* env, wasmtime_caller_t* calle
         auto* md = rt->metadataHost();
         int32_t count = 0;
         if (md)
-                md->GetNumResourceMetaData(const_cast<char*>(key.c_str()), &count);
+                md->GetNumResourceMetaData(Mut(key), &count);
         results[0] = I32Val(count);
         return nullptr;
 }
@@ -702,7 +716,7 @@ static wasm_trap_t* CbIsManifestVersionV2Between(void* env, wasmtime_caller_t* c
         auto* mh = rt->manifestHost();
         bool result = false;
         if (mh)
-                mh->IsManifestVersionV2Between(const_cast<char*>(lower.c_str()), const_cast<char*>(upper.c_str()), &result);
+                mh->IsManifestVersionV2Between(Mut(lower), Mut(upper), &result);
         results[0] = I32Val(result ? 1 : 0);
         return nullptr;
 }
@@ -790,7 +804,7 @@ static wasm_trap_t* CbInvokeFunctionReference(void* env, wasmtime_caller_t* call
         if (!rt->host())
                 return nullptr;
         fx::OMPtr<IScriptBuffer> retBuf;
-        rt->host()->InvokeFunctionReference(const_cast<char*>(refStr.c_str()), argsCopy.data(), argsLen, retBuf.ReleaseAndGetAddressOf());
+        rt->host()->InvokeFunctionReference(Mut(refStr), argsCopy.data(), argsLen, retBuf.ReleaseAndGetAddressOf());
         uint32_t dataPtr = 0, dataLen = 0;
         if (retBuf.GetRef() && retBuf->GetLength() > 0)
         {
@@ -881,7 +895,6 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
                 results[0] = I32Val(pr.status);
                 return nullptr;
         }
-        mem.init(caller);
         int32_t written = 0;
         if (outMax > 0 && mem.check(outBuf, static_cast<size_t>(outMax)))
         {
@@ -1680,7 +1693,7 @@ result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const
         {
                 std::string msg = "Warning: WebAssembly '" + m_resourceName + "' has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                        m_host->ScriptTrace(Mut(msg));
                 LogWarning("%s", msg.c_str());
         }
         return FX_S_OK;
@@ -1704,7 +1717,7 @@ result_t OM_DECL CppScriptRuntime::Tick()
         if (!callVoid(m_fnTick) && m_host.GetRef())
         {
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in tick handler^7\n";
-                m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                m_host->ScriptTrace(Mut(msg));
         }
         return FX_S_OK;
 }
@@ -1789,7 +1802,7 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
         if (!eventOk && m_host.GetRef())
         {
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in event '" + eventName + "'^7\n";
-                m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                m_host->ScriptTrace(Mut(msg));
         }
         if (eventOk)
                 wasmFree(block, totalSz);
@@ -1812,14 +1825,14 @@ result_t OM_DECL CppScriptRuntime::CallRef(int32_t refIdx, char* argsSerialized,
         {
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": Unhandled exception in ref " + std::to_string(refIdx) + ": " + e.what() + "^7\n";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                        m_host->ScriptTrace(Mut(msg));
                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
         }
         catch (...)
         {
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": Unhandled non-standard exception in ref " + std::to_string(refIdx) + "^7\n";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                        m_host->ScriptTrace(Mut(msg));
                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
         }
         auto buf = fx::MakeNew<ScriptBuffer>(std::move(result));
@@ -1914,6 +1927,7 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
         std::string resolvedPath, resolvedRoot;
         if (!ValidateScriptPath(scriptFile, root, resolvedPath, resolvedRoot))
                 return FX_E_INVALIDARG;
+        m_scriptFile = scriptFile;
         std::string_view file(scriptFile);
         if (file.ends_with(".cpp"))
         {
@@ -1976,11 +1990,11 @@ result_t OM_DECL CppScriptRuntime::WalkStack(char*, uint32_t, char*, uint32_t, I
         fx::MsgpackWriter w;
         w.mapHeader(4);
         w.str("name");
-        w.str("[wasm]");
+        w.str(m_scriptFile.empty() ? "[wasm]" : m_scriptFile);
         w.str("file");
         w.str(m_resourceName);
         w.str("sourcefile");
-        w.str("");
+        w.str(m_scriptFile);
         w.str("line");
         w.encInt(0);
         visitor->SubmitStackFrame(reinterpret_cast<char*>(w.buf.data()), static_cast<uint32_t>(w.buf.size()));
@@ -2007,7 +2021,7 @@ result_t OM_DECL CppScriptRuntime::EmitWarning(char* channel, char* message)
                 const char* ch = channel ? channel : "script";
                 std::string msg = std::string("[warning:") + ch + "] " + message + "\n";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                        m_host->ScriptTrace(Mut(msg));
                 fprintf(stderr, "[script:%s] %s", m_resourceName.c_str(), msg.c_str());
         }
         return FX_S_OK;
