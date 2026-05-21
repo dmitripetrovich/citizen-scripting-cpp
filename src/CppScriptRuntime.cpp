@@ -79,12 +79,6 @@ static void Log(LogLevel level, const char* fmt, ...)
 
 static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot)
 {
-        std::string_view scriptFileView(scriptFile);
-        if (scriptFileView.find("/..") != std::string_view::npos || scriptFileView.find("../") != std::string_view::npos || scriptFileView == "..")
-        {
-                LogError("Rejected script path with '..': '%s'", scriptFile);
-                return false;
-        }
         std::string fullPath = root + "/" + scriptFile;
         char* resolvedFull = realpath(fullPath.c_str(), nullptr);
         if (!resolvedFull)
@@ -130,13 +124,10 @@ static const std::string& GetEmbeddedSdkPath()
                 char* dir = mkdtemp(tmpl);
                 if (!dir)
                 {
-                        path = "/tmp/citizen-scripting-cpp-fallback";
-                        mkdir(path.c_str(), 0700);
+                        LogError("mkdtemp failed for embedded SDK path");
+                        return;
                 }
-                else
-                {
-                        path = dir;
-                }
+                path = dir;
                 mkdir((path + "/include").c_str(), 0700);
                 mkdir((path + "/src").c_str(), 0700);
                 WriteFileFromMemory(path + "/include/CppScriptRuntime.h", kEmbeddedCppScriptRuntimeH, kEmbeddedCppScriptRuntimeH_len);
