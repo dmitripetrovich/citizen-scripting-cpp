@@ -228,27 +228,13 @@ struct Value
         Value& operator=(Value&&) noexcept = default;
         Value(const Value&) = default;
         Value& operator=(const Value&) = default;
-        Value(int v) : kind(Kind::Number), numVal(v), isIntegral(true)
-        {
-        }
-        Value(int64_t v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true)
-        {
-        }
-        Value(double v) : kind(Kind::Number), numVal(v)
-        {
-        }
-        Value(float v) : kind(Kind::Number), numVal(static_cast<double>(v))
-        {
-        }
-        Value(bool b) : kind(Kind::Bool), boolVal(b)
-        {
-        }
-        Value(const char* s) : kind(s ? Kind::String : Kind::Null), scalar(s ? s : "")
-        {
-        }
-        Value(std::string s) : kind(Kind::String), scalar(std::move(s))
-        {
-        }
+        Value(int v) : kind(Kind::Number), numVal(v), isIntegral(true) { }
+        Value(int64_t v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true) { }
+        Value(double v) : kind(Kind::Number), numVal(v) { }
+        Value(float v) : kind(Kind::Number), numVal(static_cast<double>(v)) { }
+        Value(bool b) : kind(Kind::Bool), boolVal(b) { }
+        Value(const char* s) : kind(s ? Kind::String : Kind::Null), scalar(s ? s : "") { }
+        Value(std::string s) : kind(Kind::String), scalar(std::move(s)) { }
         std::string asStr(std::string_view def = "") const
         {
                 return kind == Kind::String ? scalar : std::string(def);
@@ -1121,21 +1107,11 @@ struct NativeArg
         uint64_t value = 0;
         bool isPtr = false;
         NativeArg() = default;
-        NativeArg(int32_t v) : value((uint64_t)(uint32_t)v), isPtr(false)
-        {
-        }
-        NativeArg(uint32_t v) : value((uint64_t)v), isPtr(false)
-        {
-        }
-        NativeArg(int64_t v) : value((uint64_t)v), isPtr(false)
-        {
-        }
-        NativeArg(uint64_t v) : value(v), isPtr(false)
-        {
-        }
-        NativeArg(bool v) : value(v ? 1 : 0), isPtr(false)
-        {
-        }
+        NativeArg(int32_t v) : value((uint64_t)(uint32_t)v), isPtr(false) { }
+        NativeArg(uint32_t v) : value((uint64_t)v), isPtr(false) { }
+        NativeArg(int64_t v) : value((uint64_t)v), isPtr(false) { }
+        NativeArg(uint64_t v) : value(v), isPtr(false) { }
+        NativeArg(bool v) : value(v ? 1 : 0), isPtr(false) { }
         NativeArg(float v)
         {
                 uint32_t b;
@@ -1171,9 +1147,7 @@ struct Vector3
 class EventArgs
 {
 public:
-        explicit EventArgs(fxw_internal::Value arr) : m_arr(std::move(arr))
-        {
-        }
+        explicit EventArgs(fxw_internal::Value arr) : m_arr(std::move(arr)) { }
         size_t size() const
         {
                 return m_arr.size();
@@ -1492,9 +1466,7 @@ inline std::vector<uint8_t> invokeFunctionReference(const std::string& ref, cons
 }
 
 template<typename T>
-struct fn_traits : fn_traits<decltype(&std::decay_t<T>::operator())>
-{
-};
+struct fn_traits : fn_traits<decltype(&std::decay_t<T>::operator())> { };
 
 template<typename C, typename R, typename... Args>
 struct fn_traits<R (C::*)(Args...) const>
@@ -1593,9 +1565,7 @@ namespace fx::natives
 
 namespace detail
 {
-        inline void pushArgs(NativeCtx&, uint32_t)
-        {
-        }
+        inline void pushArgs(NativeCtx&, uint32_t) { }
         template<typename T, typename... Rest>
         inline void pushArgs(NativeCtx& ctx, uint32_t idx, T&& arg, Rest&&... rest)
         {
@@ -2309,9 +2279,7 @@ struct WasmPromise
         {
                 return { };
         }
-        void return_void()
-        {
-        }
+        void return_void() { }
 #if __cpp_exceptions
         void unhandled_exception()
         {
@@ -2423,9 +2391,7 @@ using ScriptTask = fxw_internal::WasmTask;
 struct Wait
 {
         int64_t ms;
-        explicit Wait(int64_t ms) : ms(ms)
-        {
-        }
+        explicit Wait(int64_t ms) : ms(ms) { }
         bool await_ready() const noexcept
         {
                 return false;
@@ -2434,9 +2400,7 @@ struct Wait
         {
                 h.promise().waitMs = ms;
         }
-        void await_resume() const noexcept
-        {
-        }
+        void await_resume() const noexcept { }
 };
 
 template<typename F>
@@ -2489,7 +2453,7 @@ namespace fx
 
 struct WorkerResult
 {
-        int32_t status; // >= 0 = done (bytes written), -1 = error, -2 = invalid, -3 = running
+        int32_t status;
         std::string output;
 };
 

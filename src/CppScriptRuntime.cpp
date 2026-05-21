@@ -1,4 +1,5 @@
 #include "../include/CppScriptRuntime.h"
+#include "SDK.h"
 
 #include <cstdio>
 #include <cstring>
@@ -10,7 +11,9 @@
 
 #include <atomic>
 #include <cstdarg>
+#include <dlfcn.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 using namespace fx::cpp;
@@ -101,6 +104,123 @@ static bool ValidateScriptPath(const char* scriptFile, const std::string& root, 
         if (resolvedPath.compare(0, resolvedRoot.size(), resolvedRoot) != 0 || (resolvedPath.size() > resolvedRoot.size() && resolvedPath[resolvedRoot.size()] != '/'))
         {
                 LogError("Script path '%s' resolves outside resource root", scriptFile);
+                return false;
+        }
+        return true;
+}
+
+static bool WriteFileFromMemory(const std::string& path, const char* data, size_t len)
+{
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f)
+                return false;
+        bool ok = fwrite(data, 1, len, f) == len;
+        fclose(f);
+        return ok;
+}
+
+static const std::string& GetEmbeddedSdkPath()
+{
+        static std::string path;
+        static std::once_flag flag;
+        std::call_once(flag, []
+        {
+                path = "/tmp/citizen-scripting-cpp";
+                mkdir(path.c_str(), 0755);
+                mkdir((path + "/include").c_str(), 0755);
+                mkdir((path + "/src").c_str(), 0755);
+                WriteFileFromMemory(path + "/include/CppScriptRuntime.h", kEmbeddedCppScriptRuntimeH, kEmbeddedCppScriptRuntimeH_len);
+                WriteFileFromMemory(path + "/src/DB.h", kEmbeddedDBH, kEmbeddedDBH_len);
+        });
+        return path;
+}
+
+static std::string FindWasiSysroot()
+{
+        const char* env = getenv("WASI_SYSROOT");
+        if (env && env[0])
+                return std::string(env);
+        static constexpr const char* kPaths[] = {
+                "/usr/share/wasi-sysroot",
+                "/opt/wasi-sdk/share/wasi-sysroot",
+        };
+        for (auto p : kPaths)
+        {
+                struct stat st;
+                if (stat(p, &st) == 0 && S_ISDIR(st.st_mode))
+                        return std::string(p);
+        }
+        return { };
+}
+
+static std::string FindClangpp()
+{
+        const char* sdk = getenv("WASI_SDK");
+        if (sdk && sdk[0])
+        {
+                std::string path = std::string(sdk) + "/bin/clang++";
+                if (access(path.c_str(), X_OK) == 0)
+                        return path;
+        }
+        if (access("/usr/bin/clang++", X_OK) == 0)
+                return "/usr/bin/clang++";
+        FILE* p = popen("which clang++ 2>/dev/null", "r");
+        if (p)
+        {
+                char buf[512];
+                std::string result;
+                while (fgets(buf, sizeof(buf), p))
+                        result += buf;
+                pclose(p);
+                while (!result.empty() && result.back() == '\n')
+                        result.pop_back();
+                if (!result.empty() && access(result.c_str(), X_OK) == 0)
+                        return result;
+        }
+        return { };
+}
+
+static bool CompileCpp(const std::string& sourcePath, const std::string& outputPath, std::string& errorOutput)
+{
+        std::string sysroot = FindWasiSysroot();
+        if (sysroot.empty())
+        {
+                errorOutput = "wasi-sysroot not found. Install it or set WASI_SYSROOT.";
+                return false;
+        }
+        std::string clang = FindClangpp();
+        if (clang.empty())
+        {
+                errorOutput = "clang++ not found. Install it or set WASI_SDK.";
+                return false;
+        }
+        auto shellEscape = [](const std::string& s) -> std::string
+        {
+                std::string out = "'";
+                for (char c : s)
+                {
+                        if (c == '\'')
+                                out += "'\\''";
+                        else
+                                out += c;
+                }
+                out += '\'';
+                return out;
+        };
+        const std::string& sdkPath = GetEmbeddedSdkPath();
+        std::string cmd = shellEscape(clang)
+                + " --target=wasm32-wasip1 -std=c++23 -O2"
+                + " --sysroot=" + shellEscape(sysroot)
+                + " -fno-exceptions"
+                + " -I" + shellEscape(sdkPath)
+                + " -Wl,--export-memory"
+                + " " + shellEscape(sourcePath)
+                + " -o " + shellEscape(outputPath)
+                + " 2>&1";
+        auto result = fx::spawnProcess(cmd, 1048576, 60000);
+        if (result.exitCode != 0)
+        {
+                errorOutput = result.output.empty() ? "clang++ exited with code " + std::to_string(result.exitCode) : result.output;
                 return false;
         }
         return true;
@@ -1645,9 +1765,34 @@ int32_t OM_DECL CppScriptRuntime::HandlesFile(char* scriptFile, IScriptHostWithR
         if (!scriptFile)
                 return 0;
         std::string_view file(scriptFile);
-        if (file.ends_with(".wasm"))
+        if (file.ends_with(".wasm") || file.ends_with(".cpp"))
                 return 1;
         return 0;
+}
+
+static bool ReadFileBytes(const std::string& path, std::vector<uint8_t>& out)
+{
+        int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0)
+                return false;
+        FILE* f = fdopen(fd, "rb");
+        if (!f)
+        {
+                close(fd);
+                return false;
+        }
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (sz <= 0)
+        {
+                fclose(f);
+                return false;
+        }
+        out.resize(static_cast<size_t>(sz));
+        bool ok = fread(out.data(), 1, out.size(), f) == out.size();
+        fclose(f);
+        return ok;
 }
 
 result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
@@ -1674,39 +1819,53 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
         if (!ValidateScriptPath(scriptFile, root, resolvedPath, resolvedRoot))
                 return FX_E_INVALIDARG;
         std::string_view file(scriptFile);
+        if (file.ends_with(".cpp"))
+        {
+                std::string cachedWasm = resolvedPath.substr(0, resolvedPath.size() - 4) + ".wasm";
+                struct stat srcStat{ }, cacheStat{ };
+                bool needsCompile = true;
+                if (stat(resolvedPath.c_str(), &srcStat) == 0 && stat(cachedWasm.c_str(), &cacheStat) == 0)
+                {
+                        needsCompile = srcStat.st_mtime > cacheStat.st_mtime;
+                        if (!needsCompile)
+                        {
+                                static struct stat s_soStat{ };
+                                static std::once_flag s_soFlag;
+                                std::call_once(s_soFlag, []
+                                {
+                                        Dl_info info{ };
+                                        if (dladdr(reinterpret_cast<void*>(&ReadFileBytes), &info) && info.dli_fname)
+                                                stat(info.dli_fname, &s_soStat);
+                                });
+                                if (s_soStat.st_mtime > cacheStat.st_mtime)
+                                        needsCompile = true;
+                        }
+                }
+                if (needsCompile)
+                {
+                        LogWarning("Compiling '%s' for resource '%s'...", scriptFile, m_resourceName.c_str());
+                        std::string compileError;
+                        if (!CompileCpp(resolvedPath, cachedWasm, compileError))
+                        {
+                                LogError("Compilation failed for '%s':\n%s", scriptFile, compileError.c_str());
+                                return FX_E_INVALIDARG;
+                        }
+                }
+                std::vector<uint8_t> wasmBytes;
+                if (!ReadFileBytes(cachedWasm, wasmBytes))
+                {
+                        LogError("Failed to read compiled wasm '%s'", cachedWasm.c_str());
+                        return FX_E_INVALIDARG;
+                }
+                return loadWasm(wasmBytes, resolvedPath);
+        }
         if (file.ends_with(".wasm"))
         {
                 std::vector<uint8_t> wasmBytes;
+                if (!ReadFileBytes(resolvedPath, wasmBytes))
                 {
-                        int fd = open(resolvedPath.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-                        if (fd < 0)
-                        {
-                                LogError("Cannot open '%s' (O_NOFOLLOW)", resolvedPath.c_str());
-                                return FX_E_INVALIDARG;
-                        }
-                        FILE* f = fdopen(fd, "rb");
-                        if (!f)
-                        {
-                                close(fd);
-                                LogError("Cannot open '%s'", resolvedPath.c_str());
-                                return FX_E_INVALIDARG;
-                        }
-                        fseek(f, 0, SEEK_END);
-                        long sz = ftell(f);
-                        fseek(f, 0, SEEK_SET);
-                        if (sz <= 0)
-                        {
-                                fclose(f);
-                                return FX_E_INVALIDARG;
-                        }
-                        wasmBytes.resize(static_cast<size_t>(sz));
-                        if (fread(wasmBytes.data(), 1, wasmBytes.size(), f) != wasmBytes.size())
-                        {
-                                fclose(f);
-                                LogError("Failed to read '%s'", resolvedPath.c_str());
-                                return FX_E_INVALIDARG;
-                        }
-                        fclose(f);
+                        LogError("Failed to read '%s'", resolvedPath.c_str());
+                        return FX_E_INVALIDARG;
                 }
                 return loadWasm(wasmBytes, resolvedPath);
         }

@@ -12,6 +12,7 @@ cd "$PROJECT_DIR"
 rm -rf "$BUILD_DIR"
 
 python3 tools/native_db.py
+python3 tools/embed_sdk.py
 
 premake5 gmake2
 make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
@@ -19,14 +20,11 @@ make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
         CXX="zig c++ -target x86_64-linux-musl" \
         -j"$(nproc)"
 
-"$PROJECT_DIR/tools/build/resources" "$PROJECT_DIR/tools/example/server.cpp"
-mv "$PROJECT_DIR/tools/example/server.wasm" "$OUT_DIR/server.wasm"
-
 cp "$OUT_DIR/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
+
 rm -rf "$RESOURCE_DIR"
 mkdir -p "$RESOURCE_DIR"
 cp "$PROJECT_DIR/tools/example/server.cpp" "$RESOURCE_DIR/server.cpp"
-cp "$OUT_DIR/server.wasm" "$RESOURCE_DIR/server.wasm"
 cp "$PROJECT_DIR/tools/example/fxmanifest.lua" "$RESOURCE_DIR/fxmanifest.lua"
 
 echo "Done. Runtime -> $SERVER_DIR, resource -> $RESOURCE_DIR"

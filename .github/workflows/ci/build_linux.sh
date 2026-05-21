@@ -17,9 +17,4 @@ make -C build config=release \
         CXX="zig c++ -target x86_64-linux-musl" \
         -j"$(nproc)"
 
-echo "Compiling resource (wasm)..."
-tools/build/resources tools/example/server.cpp
-
-rm -f tools/example/server.wasm
-
 echo "All checks passed."

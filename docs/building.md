@@ -19,7 +19,7 @@ cd citizen-scripting-cpp
 premake5 gmake2
 ```
 
-> This initializes the wasmtime submodule and builds it if needed.
+This initializes the wasmtime submodule and builds it if needed.
 
 Then build:
 
@@ -34,40 +34,26 @@ make -C build -f citizen-scripting-cpp.make config=release \
 
 Copy `build/bin/Release/libcitizen-scripting-cpp.so` next to your FXServer binary.
 
-### Compile a resource
+### Writing a resource
 
-To build resources you need the following dependencies:
+Just reference your `.cpp` file directly in the manifest:
 
-- [Clang](https://clang.llvm.org/) with `wasm32-wasip1` target support
-- [WASI sysroot](https://github.com/WebAssembly/wasi-sdk) – install `wasi-sdk` or `wasi-sysroot` package.
-
-> Build tool looks in `/usr/share/wasi-sysroot` and `/opt/wasi-sdk/share/wasi-sysroot`, or set `WASI_SYSROOT` explicitly.
-
-Then build with `tools/build/resources`:
-
-```bash
-tools/build/resources server.cpp
+```lua
+server_script 'server.cpp'
 ```
 
-This produces `server.wasm`.
+The server needs the following for compilation:
 
-### Regenerating the native database
+- [Clang](https://clang.llvm.org/) - with `wasm32-wasip1` target support
+- [WASI sysroot](https://github.com/WebAssembly/wasi-sdk) – install `wasi-sdk` or `wasi-sysroot` package
 
-`src/DB.h` is auto-generated from upstream native definitions:
+Specifically looks in `/usr/share/wasi-sysroot` and `/opt/wasi-sdk/share/wasi-sysroot`, or set `WASI_SYSROOT`.
 
-```bash
-# FiveM (GTA5)
-python3 tools/native_db.py
+The runtime compiles resource to `.wasm` automatically when it's started.
 
-# RedM (RDR3)
-python3 tools/native_db.py --game redm
-```
+The resource is cached and only recompiled when the `.cpp` or the runtime `.so` changes.
 
 ### Known issues
-
-- Resource fails to load with missing `__cfx_init` export
-
-  Use `tools/build/resources` or pass the correct `-Wl,--export=...` flags manually.
 
 - wasmtime-c-api build fails with a linker error
 
@@ -84,4 +70,6 @@ python3 tools/native_db.py --game redm
 
 - `error: cannot use 'try' with exceptions disabled`
 
-  Resources require `-fno-exceptions`. `tools/build/resources` sets this automatically.
+  Resources require `-fno-exceptions`.
+
+  The runtime passes this flag automatically during on-the-fly compilation.

@@ -75,6 +75,7 @@ inline void* fwAlloc(size_t size)
 {
         return malloc(size);
 }
+
 inline void fwFree(void* p)
 {
         free(p);
@@ -810,9 +811,7 @@ class PushEnvironment
         }
         PushEnvironment(const PushEnvironment&) = delete;
         PushEnvironment& operator=(const PushEnvironment&) = delete;
-        PushEnvironment(PushEnvironment&& o) noexcept : m_handler(std::move(o.m_handler)), m_runtime(std::move(o.m_runtime))
-        {
-        }
+        PushEnvironment(PushEnvironment&& o) noexcept : m_handler(std::move(o.m_handler)), m_runtime(std::move(o.m_runtime)) { }
 };
 
 inline result_t GetCurrentScriptRuntime(fx::OMPtr<IScriptRuntime>* out)

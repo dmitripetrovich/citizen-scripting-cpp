@@ -10,11 +10,12 @@ It provides:
 ### How it works
 
 The runtime plugin (`libcitizen-scripting-cpp.so`) is loaded by FXServer and handles the lifecycle:
-1. Server reads `fxmanifest.lua` -> sees `server_script 'server.wasm'`
-2. Runtime loads your module and calls `__cfx_init`
-3. `Server { }` block runs and it registers events, exports, timers, etc.
-4. Runtime dispatches ticks, events, and ref calls to your handlers
-5. On resource stop, `onStop` handlers run and everything is cleaned up
+1. Server reads `fxmanifest.lua` -> sees `server_script 'server.cpp'`
+2. Runtime compiles the `.cpp` to `.wasm` on-the-fly (cached, only recompiles when source or runtime changes)
+3. Wasmtime loads the module and calls `__cfx_init`
+4. `Server { }` block runs and it registers events, exports, timers, etc.
+5. Runtime dispatches ticks, events, and ref calls to your handlers
+6. On resource stop, `onStop` handlers run and everything is cleaned up
 
 ### Notes
 
@@ -34,7 +35,4 @@ The runtime plugin (`libcitizen-scripting-cpp.so`) is loaded by FXServer and han
 - `IScriptStackWalkingRuntime` submits a basic frame but the host may not call it in all error scenarios.
 - `IScriptProfiler` is not yet implemented. `profiler record` won't produce scope events from C++ resources.
 - RedM is untested.
-
-### Compatibility
-
 - The C++ API (events, exports, natives, timers, coroutines, statebags, etc.) has full parity with Lua, JS, and Mono-v2.
