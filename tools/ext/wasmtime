@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WASMTIME_VERSION="45.0.0"
+WASMTIME_TARGET="x86_64-musl"
+TARBALL_NAME="wasmtime-v${WASMTIME_VERSION}-${WASMTIME_TARGET}-c-api.tar.xz"
+DOWNLOAD_URL="https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/${TARBALL_NAME}"
+OUT_DIR="$(cd "$(dirname "$0")/../.." && pwd)/vendor/wasmtime"
+
+if [[ -f "$OUT_DIR/lib/libwasmtime.a" ]]; then
+        echo "wasmtime v${WASMTIME_VERSION} already present."
+        exit 0
+fi
+
+echo "Fetching wasmtime v${WASMTIME_VERSION} (${WASMTIME_TARGET})..."
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+curl -fSL "$DOWNLOAD_URL" -o "$TMP/$TARBALL_NAME"
+tar -xf "$TMP/$TARBALL_NAME" -C "$TMP"
+
+rm -rf "$OUT_DIR"
+mv "$TMP/wasmtime-v${WASMTIME_VERSION}-${WASMTIME_TARGET}-c-api" "$OUT_DIR"
+
+echo "Done. wasmtime v${WASMTIME_VERSION} -> $OUT_DIR"

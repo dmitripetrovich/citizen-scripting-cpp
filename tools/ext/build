@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 ]] || exit 2
+
+SRC=$1
+[[ -f $SRC ]] || { echo "Error: Source not found: $SRC" >&2; exit 1; }
+OUT=${SRC%.*}.wasm
+
+exec zig c++ \
+        -target wasm32-wasi \
+        -std=c++23 \
+        -O2 \
+        -fno-exceptions \
+        -mexec-model=reactor \
+        -I"$(cd "$(dirname "$0")/../.." && pwd)" \
+        -Wl,--export-memory \
+        "$SRC" \
+        -o "$OUT"

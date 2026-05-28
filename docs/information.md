@@ -10,7 +10,7 @@ It provides:
 ### How it works
 
 The runtime plugin (`libcitizen-scripting-cpp.so`) is loaded by FXServer and handles the lifecycle:
-1. Author builds `server.cpp` to `server.wasm` with `tools/build` (see [building.md](./building.md)).
+1. Author builds `server.cpp` to `server.wasm` with `tools/ext/build` (see [building.md](./building.md))
 2. Server reads `fxmanifest.lua` -> sees `server_script 'server.wasm'`
 3. Wasmtime loads the module and calls `__cfx_init`
 4. `Server { }` block runs and it registers events, exports, timers, etc.

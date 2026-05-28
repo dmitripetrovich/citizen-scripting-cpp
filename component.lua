@@ -1,29 +1,17 @@
 local cwd = os.getcwd()
-local musl_target = "x86_64-unknown-linux-musl"
-local wasmtime_root = ("%s/vendor/wasmtime"):format(cwd)
-local wasmtime_release = ("%s/target/%s/release"):format(wasmtime_root, musl_target)
-local on_macos = os.host() == "macosx"
+local wasmtime_dir = ("%s/vendor/wasmtime"):format(cwd)
 
-if on_macos and not _OPTIONS["os"] then
-        _OPTIONS["os"] = "linux"
-end
+os.execute("tools/ext/wasmtime")
 
-os.execute("git submodule update --init vendor/wasmtime")
-if not os.isfile(("%s/libwasmtime.a"):format(wasmtime_release)) then
-        os.execute(("rustup target add %s"):format(musl_target))
-        local cargo = on_macos and "cargo zigbuild" or "cargo build"
-        os.execute(("%s --release -p wasmtime-c-api --target %s --manifest-path %s/Cargo.toml"):format(cargo, musl_target, wasmtime_root))
+if not os.isfile(("%s/src/DB.h"):format(cwd)) then
+        os.execute("python3 tools/native_db.py")
 end
 
 return function()
         filter {}
-        includedirs { ("%s/crates/c-api/include"):format(wasmtime_root) }
-        local include = os.matchdirs(("%s/build/wasmtime-c-api-impl-*/out/include"):format(wasmtime_release))
-        if #include > 0 then
-                includedirs { include[1] }
-        end
+        includedirs { ("%s/include"):format(wasmtime_dir) }
         linkoptions {
-                ("%s/libwasmtime.a"):format(wasmtime_release),
+                ("%s/lib/libwasmtime.a"):format(wasmtime_dir),
                 "-lpthread", "-ldl", "-lm",
         }
         makesettings [[

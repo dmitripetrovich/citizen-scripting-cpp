@@ -10,8 +10,6 @@ cd "$PROJECT_DIR"
 
 rm -rf "$BUILD_DIR"
 
-python3 tools/native_db.py
-
 premake5 --os=linux gmake
 make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
         CC="zig cc -target x86_64-linux-musl" \
@@ -19,7 +17,7 @@ make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
         -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)" \
         2> >(grep -v "unable to open library directory '/usr/lib64'" >&2 || true)
 
-tools/build tools/example/server.cpp
+tools/ext/build tools/example/server.cpp
 
 cp "$BUILD_DIR/bin/Release/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
 
