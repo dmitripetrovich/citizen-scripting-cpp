@@ -65,20 +65,24 @@ inline int32_t allocateId(int32_t& nextId, const Container& used)
 struct MsgpackWriter
 {
         std::vector<uint8_t> buf;
+
         void pu8(uint8_t v)
         {
                 buf.push_back(v);
         }
+
         void pu16(uint16_t v)
         {
                 buf.push_back(v >> 8);
                 buf.push_back(v & 0xFF);
         }
+
         void pu32(uint32_t v)
         {
                 pu16(v >> 16);
                 pu16(v & 0xFFFF);
         }
+
         void str(std::string_view s)
         {
                 uint32_t n = (uint32_t)s.size();
@@ -101,6 +105,7 @@ struct MsgpackWriter
                 }
                 buf.insert(buf.end(), s.begin(), s.end());
         }
+
         void arrayHeader(uint32_t n)
         {
                 if (n <= 15)
@@ -116,6 +121,7 @@ struct MsgpackWriter
                         pu32(n);
                 }
         }
+
         void mapHeader(uint32_t n)
         {
                 if (n <= 15)
@@ -131,14 +137,17 @@ struct MsgpackWriter
                         pu32(n);
                 }
         }
+
         void encNull()
         {
                 pu8(0xC0);
         }
+
         void encBool(bool v)
         {
                 pu8(v ? 0xC3 : 0xC2);
         }
+
         void encInt(int64_t v)
         {
                 if (v >= 0 && v <= 127)
@@ -171,6 +180,7 @@ struct MsgpackWriter
                         pu32((uint32_t)v);
                 }
         }
+
         void encDouble(double d)
         {
                 uint64_t bits;
@@ -236,43 +246,53 @@ struct Value
         Value(bool b) : kind(Kind::Bool), boolVal(b) { }
         Value(const char* s) : kind(s ? Kind::String : Kind::Null), scalar(s ? s : "") { }
         Value(std::string s) : kind(Kind::String), scalar(std::move(s)) { }
+
         std::string asStr(std::string_view def = "") const
         {
                 return kind == Kind::String ? scalar : std::string(def);
         }
+
         double asNum(double def = 0.0) const
         {
                 return kind == Kind::Number ? numVal : def;
         }
+
         int asInt(int def = 0) const
         {
                 return kind == Kind::Number ? static_cast<int>(numVal) : def;
         }
+
         float asFloat(float def = 0.f) const
         {
                 return kind == Kind::Number ? static_cast<float>(numVal) : def;
         }
+
         bool asBool(bool def = false) const
         {
                 return kind == Kind::Bool ? boolVal : def;
         }
+
         bool isNull() const
         {
                 return kind == Kind::Null;
         }
+
         size_t size() const
         {
                 return children.size();
         }
+
         static const Value& nullValue()
         {
                 static const Value nil;
                 return nil;
         }
+
         const Value& at(size_t i) const
         {
                 return i < children.size() ? children[i] : nullValue();
         }
+
         bool has(const std::string& key) const
         {
                 for (size_t i = 0; i < keys.size(); ++i)
@@ -280,6 +300,7 @@ struct Value
                                 return true;
                 return false;
         }
+
         const Value& operator[](const std::string& key) const
         {
                 for (size_t i = 0; i < keys.size(); ++i)
@@ -295,6 +316,7 @@ struct Reader
         const uint8_t* p;
         const uint8_t* end;
         bool error = false;
+
         uint8_t u8()
         {
                 if (p >= end)
@@ -304,21 +326,25 @@ struct Reader
                 }
                 return *p++;
         }
+
         uint16_t u16()
         {
                 uint8_t a = u8(), b = u8();
                 return (uint16_t)(a << 8 | b);
         }
+
         uint32_t u32()
         {
                 uint16_t a = u16(), b = u16();
                 return (uint32_t)((uint32_t)a << 16 | b);
         }
+
         uint64_t u64()
         {
                 uint32_t a = u32(), b = u32();
                 return (uint64_t)a << 32 | b;
         }
+
         std::string str(uint32_t n)
         {
                 if (n > static_cast<size_t>(end - p))
@@ -330,6 +356,7 @@ struct Reader
                 p += n;
                 return s;
         }
+
         Value readMap(uint32_t n, int d)
         {
                 if (n > MAX_CONTAINER_ELEMENTS)
@@ -365,6 +392,7 @@ struct Reader
                 }
                 return v;
         }
+
         Value readExt(uint32_t n)
         {
                 uint8_t t = u8();
@@ -384,6 +412,7 @@ struct Reader
                         p += n;
                 return { };
         }
+
         Value read(int d = 0)
         {
                 if (d > 64 || p >= end || error)
@@ -677,7 +706,7 @@ inline std::vector<uint8_t> encode(const Value& v)
 {
         Writer w;
         w.encValue(v);
-        return std::move(w.buf);
+        return w.buf;
 }
 
 template<typename T>
@@ -715,7 +744,7 @@ inline std::vector<uint8_t> encodeArgs(TArgs&&... vals)
         Writer w;
         w.arrayHeader(static_cast<uint32_t>(sizeof...(vals)));
         (encodeOne(w, std::forward<TArgs>(vals)), ...);
-        return std::move(w.buf);
+        return w.buf;
 }
 
 using RefCallbackFn = std::function<std::vector<uint8_t>(const uint8_t*, uint32_t)>;
@@ -844,19 +873,23 @@ namespace detail
                 std::string_view src;
                 size_t pos = 0;
                 bool error = false;
+
                 char peek() const
                 {
                         return pos < src.size() ? src[pos] : '\0';
                 }
+
                 char consume()
                 {
                         return pos < src.size() ? src[pos++] : '\0';
                 }
+
                 void skipWs()
                 {
                         while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r'))
                                 ++pos;
                 }
+
                 bool expect(char c)
                 {
                         skipWs();
@@ -867,6 +900,7 @@ namespace detail
                         }
                         return true;
                 }
+
                 unsigned parseHex4()
                 {
                         unsigned val = 0;
@@ -885,6 +919,7 @@ namespace detail
                         }
                         return val;
                 }
+
                 std::string parseString()
                 {
                         if (!expect('"'))
@@ -979,7 +1014,9 @@ namespace detail
                         error = true;
                         return out;
                 }
+
                 static constexpr int MAX_DEPTH = 128;
+
                 Value parseValue(int depth = 0)
                 {
                         if (depth > MAX_DEPTH || error)
@@ -1171,6 +1208,7 @@ struct NativeArg
         NativeArg(int64_t v) : value((uint64_t)v), isPtr(false) { }
         NativeArg(uint64_t v) : value(v), isPtr(false) { }
         NativeArg(bool v) : value(v ? 1 : 0), isPtr(false) { }
+
         NativeArg(float v)
         {
                 uint32_t b;
@@ -1178,6 +1216,7 @@ struct NativeArg
                 value = b;
                 isPtr = false;
         }
+
         NativeArg(double v)
         {
                 uint64_t b;
@@ -1185,6 +1224,7 @@ struct NativeArg
                 value = b;
                 isPtr = false;
         }
+
         static NativeArg ptr(const void* p)
         {
                 NativeArg a;
@@ -1192,6 +1232,7 @@ struct NativeArg
                 a.isPtr = true;
                 return a;
         }
+
         static NativeArg ptr(void* p)
         {
                 return ptr((const void*)p);
@@ -1207,39 +1248,48 @@ class EventArgs
 {
 public:
         explicit EventArgs(fxw_internal::Value arr) : m_arr(std::move(arr)) { }
+
         size_t size() const
         {
                 return m_arr.size();
         }
+
         std::string str(size_t i) const
         {
                 return m_arr.at(i).asStr();
         }
+
         int integer(size_t i) const
         {
                 return m_arr.at(i).asInt();
         }
+
         double number(size_t i) const
         {
                 return m_arr.at(i).asNum();
         }
+
         float floating(size_t i) const
         {
                 return m_arr.at(i).asFloat();
         }
+
         bool boolean(size_t i) const
         {
                 return m_arr.at(i).asBool();
         }
+
         bool isNull(size_t i) const
         {
                 return m_arr.at(i).isNull();
         }
+
         std::string funcRef(size_t i) const
         {
                 const auto& v = m_arr.at(i);
                 return v.kind == fxw_internal::Value::Kind::FuncRef ? v.scalar : std::string{ };
         }
+
         template<typename T>
         T get(size_t i) const;
 
@@ -1366,6 +1416,7 @@ struct Context
         std::unordered_map<int32_t, int32_t> stateBagHandlerRefs; // cookie -> hostRef
         std::unordered_map<int32_t, fx::HttpCallback> httpCallbacks;
         bool httpResponseRegistered = false;
+
         int32_t addTimer(uint32_t ms, uint32_t intervalMs, std::function<void()> cb)
         {
                 if (timers.size() >= MAX_TIMERS)
@@ -1377,6 +1428,7 @@ struct Context
                 timers[id] = { id, fire, intervalMs, std::move(cb) };
                 return id;
         }
+
         void dispatchTick()
         {
                 auto now = std::chrono::steady_clock::now();
@@ -1405,11 +1457,13 @@ struct Context
                 for (size_t ti = 0; ti < tickCount; ++ti)
                         safeInvoke(ticks[ti], resourceName.c_str(), "tick handler");
         }
+
         void dispatchStop()
         {
                 for (auto& h : stops)
                         safeInvoke(h, resourceName.c_str(), "stop handler");
         }
+
         void dispatchEvent(const char* name, uint32_t nameLen, const uint8_t* args, uint32_t argsLen, const char* src, uint32_t srcLen)
         {
                 std::string key(name, nameLen);
@@ -2488,14 +2542,17 @@ struct Wait
 {
         int64_t ms;
         explicit Wait(int64_t ms) : ms(ms) { }
+
         bool await_ready() const noexcept
         {
                 return false;
         }
+
         void await_suspend(fxw_internal::WasmCoroutineHandle h) const noexcept
         {
                 h.promise().waitMs = ms;
         }
+
         void await_resume() const noexcept { }
 };
 
@@ -2764,15 +2821,19 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         ~CppScriptRuntime();
         result_t OM_DECL Create(IScriptHost* host) override;
         result_t OM_DECL Destroy() override;
+
         void* OM_DECL GetParentObject() override
         {
                 return m_parentObject;
         }
+
         void OM_DECL SetParentObject(void*) override;
+
         int32_t OM_DECL GetInstanceId() override
         {
                 return m_instanceId;
         }
+
         result_t OM_DECL Tick() override;
         result_t OM_DECL TickBookmarks(uint64_t* bookmarks, int32_t numBookmarks) override;
         result_t OM_DECL TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId) override;
@@ -2788,22 +2849,27 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         void OM_DECL SetupFxProfiler(void* obj, int32_t resourceId) override;
         void OM_DECL ShutdownFxProfiler() override;
         int32_t AddFuncRef(fx::RefCallback cb);
+
         IScriptHost* host() const
         {
                 return m_host.GetRef();
         }
+
         IScriptHostWithResourceData* metadataHost() const
         {
                 return m_metadataHost.GetRef();
         }
+
         IScriptHostWithManifest* manifestHost() const
         {
                 return m_manifestHost.GetRef();
         }
+
         const std::string& resourceName() const
         {
                 return m_resourceName;
         }
+
         uint8_t* wasmBase();
         size_t wasmMemSize();
         uint32_t wasmAlloc(uint32_t size);
@@ -2814,6 +2880,7 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         void wasmMapRef(int32_t refIdx, int32_t callbackId);
         void wasmDuplicateRef(int32_t callbackId);
         void wasmRemoveRef(int32_t callbackId);
+
         struct WorkerState
         {
                 enum Status
@@ -2827,11 +2894,13 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
                 Status status = Running;
                 std::vector<char> result;
         };
+
         static constexpr int32_t MAX_WORKERS_PER_RESOURCE = 8;
         wasmtime_module_t* wasmModule() const
         {
                 return m_module;
         }
+
         void scheduleWasmBookmark(int32_t wasmId, int32_t deadlineMs);
         void refuelWasm();
         static wasm_engine_t* engine();

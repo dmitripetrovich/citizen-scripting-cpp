@@ -159,12 +159,34 @@ struct WasmMem
 {
         uint8_t* base = nullptr;
         size_t sz = 0;
+
         bool init(wasmtime_caller_t* caller)
         {
                 auto* ctx = wasmtime_caller_context(caller);
                 return CallerMemory(caller, ctx, &base, &sz);
         }
+
         bool check(uint32_t offset, size_t len) const { return InBounds(sz, offset, len); }
+
+        std::string readStr(uint32_t ptr, uint32_t len) const
+        {
+                return std::string(reinterpret_cast<const char*>(base + ptr), len);
+        }
+
+        int32_t writeStr(uint32_t bufPtr, int32_t bufMax, std::string_view data)
+        {
+                if (bufMax > 0)
+                {
+                        size_t copy = std::min<size_t>(data.size(), static_cast<size_t>(bufMax) - 1);
+                        if (check(bufPtr, copy + 1))
+                        {
+                                if (copy > 0)
+                                        memcpy(base + bufPtr, data.data(), copy);
+                                base[bufPtr + copy] = '\0';
+                        }
+                }
+                return static_cast<int32_t>(std::min<size_t>(data.size(), static_cast<size_t>(INT32_MAX)));
+        }
 };
 
 static std::string ExtractWasmError(wasmtime_error_t* err, wasm_trap_t* trap)
@@ -248,52 +270,8 @@ static void SanitizeTraceMsg(std::string& msg)
                 unsigned char c = static_cast<unsigned char>(msg[i]);
                 if (c == '\n' || c == '\t' || (c >= 0x20 && c != 0x1B && c != 0x7F))
                 {
-                        if (c == 0xE2 && i + 2 < msg.size())
-                        {
-                                unsigned char c1 = static_cast<unsigned char>(msg[i + 1]);
-                                unsigned char c2 = static_cast<unsigned char>(msg[i + 2]);
-                                // U+200B-200F
-                                if (c1 == 0x80 && (c2 >= 0x8B && c2 <= 0x8F))
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                                // U+2028-2029
-                                if (c1 == 0x80 && (c2 == 0xA8 || c2 == 0xA9))
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                                // U+202A-202E
-                                if (c1 == 0x80 && (c2 >= 0xAA && c2 <= 0xAE))
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                                // U+2060-2064
-                                if (c1 == 0x81 && (c2 >= 0xA0 && c2 <= 0xA4))
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                                // U+2066-2069
-                                if (c1 == 0x81 && (c2 >= 0xA6 && c2 <= 0xA9))
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                        }
-                        // U+FEFF
-                        if (c == 0xEF && i + 2 < msg.size())
-                        {
-                                unsigned char c1 = static_cast<unsigned char>(msg[i + 1]);
-                                unsigned char c2 = static_cast<unsigned char>(msg[i + 2]);
-                                if (c1 == 0xBB && c2 == 0xBF)
-                                {
-                                        i += 2;
-                                        continue;
-                                }
-                        }
+                        if (c == 0xE2 && IsFilteredE2(msg, i)) { i += 2; continue; }
+                        if (c == 0xEF && IsFilteredEF(msg, i)) { i += 2; continue; }
                         msg[out++] = msg[i];
                 }
         }
@@ -313,7 +291,7 @@ static wasm_trap_t* CbTrace(void* env, wasmtime_caller_t* caller, const wasmtime
                 len = MAX_TRACE_LEN;
         if (!mem.check(ptr, len))
                 return nullptr;
-        std::string msg(reinterpret_cast<const char*>(mem.base + ptr), len);
+        std::string msg = mem.readStr(ptr, len);
         SanitizeTraceMsg(msg);
         if (rt->host())
                 rt->host()->ScriptTrace(Mut(msg));
@@ -410,13 +388,7 @@ static wasm_trap_t* CbCopyStringResult(void* env, wasmtime_caller_t* caller, con
         }
         static constexpr size_t MAX_STRING_RESULT = 1u << 20;
         size_t len = strnlen(str, MAX_STRING_RESULT);
-        size_t copy = (bufMax > 1) ? std::min<size_t>(len, static_cast<size_t>(bufMax) - 1) : 0;
-        if (copy && mem.check(bufPtr, copy + 1))
-        {
-                memcpy(mem.base + bufPtr, str, copy);
-                mem.base[bufPtr + copy] = '\0';
-        }
-        results[0] = I32Val(static_cast<int32_t>(len));
+        results[0] = I32Val(mem.writeStr(bufPtr, bufMax, std::string_view(str, len)));
         return nullptr;
 }
 
@@ -470,7 +442,7 @@ static wasm_trap_t* CbEmitEvent(void* env, wasmtime_caller_t* caller, const wasm
         uint32_t argsPtr = ArgU32(args[2]), argsLen = ArgU32(args[3]);
         if (!mem.check(namePtr, nameLen) || !mem.check(argsPtr, argsLen))
                 return nullptr;
-        std::string evName(reinterpret_cast<const char*>(mem.base + namePtr), nameLen);
+        std::string evName = mem.readStr(namePtr, nameLen);
         std::vector<uint8_t> argsCopy(mem.base + argsPtr, mem.base + argsPtr + argsLen);
         if (!rt->host())
                 return nullptr;
@@ -497,7 +469,7 @@ static wasm_trap_t* CbEmitNetEvent(void* env, wasmtime_caller_t* caller, const w
         uint32_t argsPtr = ArgU32(args[3]), argsLen = ArgU32(args[4]);
         if (!mem.check(namePtr, nameLen) || !mem.check(argsPtr, argsLen))
                 return nullptr;
-        std::string evName(reinterpret_cast<const char*>(mem.base + namePtr), nameLen);
+        std::string evName = mem.readStr(namePtr, nameLen);
         std::vector<uint8_t> argsCopy(mem.base + argsPtr, mem.base + argsPtr + argsLen);
         std::string targetStr = std::to_string(target);
         if (!rt->host())
@@ -553,7 +525,7 @@ static wasm_trap_t* CbGetResourceMetadata(void* env, wasmtime_caller_t* caller, 
                 results[0] = I32Val(0);
                 return nullptr;
         }
-        std::string key(reinterpret_cast<const char*>(mem.base + keyPtr), keyLen);
+        std::string key = mem.readStr(keyPtr, keyLen);
         auto* md = rt->metadataHost();
         std::string value;
         if (md)
@@ -562,14 +534,7 @@ static wasm_trap_t* CbGetResourceMetadata(void* env, wasmtime_caller_t* caller, 
                 if (FX_SUCCEEDED(md->GetResourceMetaData(Mut(key), index, &val)) && val)
                         value = val;
         }
-        size_t valueLen = value.size();
-        if (bufMax > 0 && mem.check(bufPtr, static_cast<size_t>(bufMax)))
-        {
-                size_t copy = std::min<size_t>(valueLen, static_cast<size_t>(bufMax) - 1);
-                memcpy(mem.base + bufPtr, value.data(), copy);
-                mem.base[bufPtr + copy] = '\0';
-        }
-        results[0] = I32Val(static_cast<int32_t>(std::min<size_t>(valueLen, INT32_MAX)));
+        results[0] = I32Val(mem.writeStr(bufPtr, bufMax, value));
         return nullptr;
 }
 
@@ -588,7 +553,7 @@ static wasm_trap_t* CbGetNumResourceMetadata(void* env, wasmtime_caller_t* calle
                 results[0] = I32Val(0);
                 return nullptr;
         }
-        std::string key(reinterpret_cast<const char*>(mem.base + keyPtr), keyLen);
+        std::string key = mem.readStr(keyPtr, keyLen);
         auto* md = rt->metadataHost();
         int32_t count = 0;
         if (md)
@@ -613,8 +578,8 @@ static wasm_trap_t* CbIsManifestVersionV2Between(void* env, wasmtime_caller_t* c
                 results[0] = I32Val(0);
                 return nullptr;
         }
-        std::string lower(reinterpret_cast<const char*>(mem.base + lowerPtr), lowerLen);
-        std::string upper(reinterpret_cast<const char*>(mem.base + upperPtr), upperLen);
+        std::string lower = mem.readStr(lowerPtr, lowerLen);
+        std::string upper = mem.readStr(upperPtr, upperLen);
         auto* mh = rt->manifestHost();
         bool result = false;
         if (mh)
@@ -671,14 +636,9 @@ static wasm_trap_t* CbCanonicalizeRef(void* env, wasmtime_caller_t* caller, cons
                 return nullptr;
         }
         size_t len = strlen(refString);
-        if (bufMax > 0 && mem.check(bufPtr, std::min<size_t>(len + 1, static_cast<size_t>(bufMax))))
-        {
-                size_t copy = std::min<size_t>(len, static_cast<size_t>(bufMax) - 1);
-                memcpy(mem.base + bufPtr, refString, copy);
-                mem.base[bufPtr + copy] = '\0';
-        }
+        int32_t written = mem.writeStr(bufPtr, bufMax, std::string_view(refString, len));
         fwFree(refString);
-        results[0] = I32Val(static_cast<int32_t>(len));
+        results[0] = I32Val(written);
         return nullptr;
 }
 
@@ -701,7 +661,7 @@ static wasm_trap_t* CbInvokeFunctionReference(void* env, wasmtime_caller_t* call
         uint32_t outPtr = ArgU32(args[4]);
         if (!mem.check(refPtr, refLen) || !mem.check(argsPtr, argsLen) || !mem.check(outPtr, 8))
                 return nullptr;
-        std::string refStr(reinterpret_cast<const char*>(mem.base + refPtr), refLen);
+        std::string refStr = mem.readStr(refPtr, refLen);
         std::vector<char> argsCopy(reinterpret_cast<char*>(mem.base + argsPtr), reinterpret_cast<char*>(mem.base + argsPtr) + argsLen);
         if (!rt->host())
                 return nullptr;
@@ -792,7 +752,7 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
                 results[0] = I32Val(-1);
                 return nullptr;
         }
-        std::string cmd(reinterpret_cast<const char*>(mem.base + cmdPtr), cmdLen);
+        std::string cmd = mem.readStr(cmdPtr, cmdLen);
         LogWarning("Resource '%s' spawning child process: %.256s%s", rt->resourceName().c_str(), cmd.c_str(), cmd.size() > 256 ? "..." : "");
         fx::ProcessResult pr = fx::spawnProcess(cmd);
         rt->m_lastSpawnExitCode = pr.exitCode;
@@ -801,19 +761,7 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
                 results[0] = I32Val(pr.status);
                 return nullptr;
         }
-        int32_t written = 0;
-        if (outMax > 0 && mem.check(outBuf, static_cast<size_t>(outMax)))
-        {
-                size_t copy = std::min<size_t>(pr.output.size(), static_cast<size_t>(outMax) - 1);
-                memcpy(mem.base + outBuf, pr.output.data(), copy);
-                mem.base[outBuf + copy] = '\0';
-                written = static_cast<int32_t>(copy);
-        }
-        else if (!pr.output.empty())
-        {
-                LogError("spawn_process: output buffer out of bounds");
-        }
-        results[0] = I32Val(written);
+        results[0] = I32Val(mem.writeStr(outBuf, outMax, pr.output));
         return nullptr;
 }
 
@@ -896,7 +844,7 @@ static wasm_trap_t* CbWorkerTrace(void*, wasmtime_caller_t* caller, const wasmti
                 len = MAX_TRACE_LEN;
         if (!mem.check(ptr, len))
                 return nullptr;
-        std::string msg(reinterpret_cast<const char*>(mem.base + ptr), len);
+        std::string msg = mem.readStr(ptr, len);
         SanitizeTraceMsg(msg);
         fprintf(stderr, "[worker] %s", msg.c_str());
         if (!msg.empty() && msg.back() != '\n')
@@ -939,7 +887,7 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 results[0] = I32Val(-3);
                 return nullptr;
         }
-        std::string fnName(reinterpret_cast<const char*>(mem.base + fnPtr), fnLen);
+        std::string fnName = mem.readStr(fnPtr, fnLen);
         std::vector<char> inputData(mem.base + inPtr, mem.base + inPtr + inLen);
         int32_t workerId = fx::allocateId(rt->m_nextWorkerId, rt->m_workers);
         if (workerId < 0)
@@ -970,20 +918,22 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                         auto cb = (strcmp(imp.name, "trace") == 0) ? CbWorkerTrace : CbWorkerStub;
                         wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], cb, nullptr, nullptr);
                 }
+                auto cleanup = [&](CppScriptRuntime::WorkerState::Status s = CppScriptRuntime::WorkerState::Error)
+                {
+                        std::lock_guard<std::mutex> lk(state->mutex);
+                        state->status = s;
+                        wasmtime_linker_delete(linker);
+                        wasmtime_store_delete(store);
+                        wasmtime_module_delete(mod);
+                };
                 wasmtime_instance_t instance{ };
                 wasm_trap_t* trap = nullptr;
                 auto* err = wasmtime_linker_instantiate(linker, wasmtime_store_context(store), mod, &instance, &trap);
                 if (err || trap)
                 {
-                        if (err)
-                                wasmtime_error_delete(err);
-                        if (trap)
-                                wasm_trap_delete(trap);
-                        std::lock_guard<std::mutex> lk(state->mutex);
-                        state->status = CppScriptRuntime::WorkerState::Error;
-                        wasmtime_linker_delete(linker);
-                        wasmtime_store_delete(store);
-                        wasmtime_module_delete(mod);
+                        if (err) wasmtime_error_delete(err);
+                        if (trap) wasm_trap_delete(trap);
+                        cleanup();
                         return;
                 }
                 auto* storeCtx = wasmtime_store_context(store);
@@ -995,11 +945,7 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 if (!wasmtime_instance_export_get(storeCtx, &instance, fnName.c_str(), fnName.size(), &fnExt) || fnExt.kind != WASMTIME_EXTERN_FUNC)
                 {
                         LogError("Worker export '%s' not found", fnName.c_str());
-                        std::lock_guard<std::mutex> lk(state->mutex);
-                        state->status = CppScriptRuntime::WorkerState::Error;
-                        wasmtime_linker_delete(linker);
-                        wasmtime_store_delete(store);
-                        wasmtime_module_delete(mod);
+                        cleanup();
                         return;
                 }
                 auto workerAlloc = [&](uint32_t size) -> uint32_t
@@ -1482,8 +1428,10 @@ static struct OrphanedWorkerList
                 std::thread thread;
                 std::shared_ptr<CppScriptRuntime::WorkerState> state;
         };
+
         std::mutex mutex;
         std::vector<Entry> entries;
+
         ~OrphanedWorkerList()
         {
                 std::lock_guard<std::mutex> lk(mutex);
@@ -1491,6 +1439,7 @@ static struct OrphanedWorkerList
                         if (e.thread.joinable())
                                 e.thread.join();
         }
+
         void reap()
         {
                 std::lock_guard<std::mutex> lk(mutex);
@@ -1511,6 +1460,7 @@ static struct OrphanedWorkerList
                                 ++it;
                 }
         }
+
         void add(std::thread&& t, std::shared_ptr<CppScriptRuntime::WorkerState> s)
         {
                 std::lock_guard<std::mutex> lk(mutex);
@@ -1637,7 +1587,7 @@ result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const
                 return FX_E_INVALIDARG;
         }
         {
-                std::string msg = "Warning: WebAssembly " + m_scriptFile + " has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.";
+                std::string msg = "Warning: WebAssembly " + m_resourceName + "/" + m_scriptFile + " has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.";
                 if (m_host.GetRef())
                         m_host->ScriptTrace(Mut(msg));
                 LogWarning("%s", msg.c_str());
