@@ -1409,6 +1409,7 @@ struct Context
         std::unordered_map<std::string, std::vector<EventHandlerEntry>> events;
         std::unordered_map<int32_t, std::string> handlerEventMap;
         int32_t nextEventHandlerId = 1;
+        uint32_t eventsKeyGen = 0;
         std::unordered_map<std::string, std::vector<fx::CommandHandler>> commands;
         std::unordered_set<std::string> netSafeEvents;
         std::unordered_map<int32_t, TimerEntry> timers;
@@ -1416,6 +1417,7 @@ struct Context
         std::unordered_map<int32_t, int32_t> stateBagHandlerRefs; // cookie -> hostRef
         std::unordered_map<int32_t, fx::HttpCallback> httpCallbacks;
         bool httpResponseRegistered = false;
+        std::vector<int32_t> dispatchExpired; // scratch for dispatchTick
 
         int32_t addTimer(uint32_t ms, uint32_t intervalMs, std::function<void()> cb)
         {
@@ -1432,11 +1434,11 @@ struct Context
         void dispatchTick()
         {
                 auto now = std::chrono::steady_clock::now();
-                std::vector<int32_t> expired;
+                dispatchExpired.clear();
                 for (auto& [id, t] : timers)
                         if (now >= t.nextFire)
-                                expired.push_back(id);
-                for (auto id : expired)
+                                dispatchExpired.push_back(id);
+                for (auto id : dispatchExpired)
                 {
                         auto it = timers.find(id);
                         if (it == timers.end())
@@ -1493,15 +1495,21 @@ struct Context
                         handlerIds[j] = it->second[j].id;
                 char eventCtx[256];
                 snprintf(eventCtx, sizeof(eventCtx), "event '%s'", key.c_str());
+                auto* vec = &it->second;
+                uint32_t observedGen = eventsKeyGen;
                 for (size_t hi = 0; hi < handlerCount; ++hi)
                 {
+                        if (eventsKeyGen != observedGen)
+                        {
+                                auto jt = events.find(key);
+                                if (jt == events.end())
+                                        break;
+                                vec = &jt->second;
+                                observedGen = eventsKeyGen;
+                        }
                         int32_t hid = handlerIds[hi];
-                        auto jt = events.find(key);
-                        if (jt == events.end())
-                                break;
-                        auto& vec = jt->second;
                         EventHandlerEntry* found = nullptr;
-                        for (auto& e : vec)
+                        for (auto& e : *vec)
                         {
                                 if (e.id == hid)
                                 {
@@ -1836,12 +1844,15 @@ inline int32_t on(const std::string& event, F&& handler)
         if (auto* c = fxw_internal::currentContext())
         {
                 auto evIt = c->events.find(event);
-                bool first = evIt == c->events.end() || evIt->second.empty();
+                bool isNewKey = evIt == c->events.end();
+                bool first = isNewKey || evIt->second.empty();
                 int32_t token = fx::allocateId(c->nextEventHandlerId, c->handlerEventMap);
                 if (token < 0)
                         return -1;
                 c->events[event].push_back({ token, std::move(h) });
                 c->handlerEventMap[token] = event;
+                if (isNewKey)
+                        ++c->eventsKeyGen;
                 if (first)
                 {
                         NativeCtx ctx{ };
@@ -1954,9 +1965,15 @@ inline void trace(const char* fmt, TArgs&&... args)
         }
         else
         {
-                int len = snprintf(nullptr, 0, fmt, std::forward<TArgs>(args)...);
-                if (len <= 0)
+                char stackBuf[256];
+                int len = snprintf(stackBuf, sizeof(stackBuf), fmt, std::forward<TArgs>(args)...);
+                if (len < 0)
                         return;
+                if (static_cast<size_t>(len) < sizeof(stackBuf))
+                {
+                        __cfxTrace(stackBuf, static_cast<uint32_t>(len));
+                        return;
+                }
                 std::string buf(static_cast<size_t>(len), '\0');
                 snprintf(buf.data(), buf.size() + 1, fmt, std::forward<TArgs>(args)...);
                 __cfxTrace(buf.data(), static_cast<uint32_t>(buf.size()));
@@ -2502,7 +2519,8 @@ inline void resumeCoroutineById(int32_t id)
                 int64_t waitMs = handle.promise().waitMs;
                 auto now = std::chrono::steady_clock::now();
                 it->second.resumeAt = (waitMs > 0) ? now + std::chrono::milliseconds(waitMs) : now;
-                __cfxScheduleBookmark(id, static_cast<int32_t>(waitMs));
+                int32_t deadline = waitMs <= 0 ? 0 : (waitMs > static_cast<int64_t>(INT32_MAX) ? INT32_MAX : static_cast<int32_t>(waitMs));
+                __cfxScheduleBookmark(id, deadline);
         }
 }
 
@@ -2512,7 +2530,8 @@ inline void resumeCoroutines()
         if (coros.empty())
                 return;
         auto now = std::chrono::steady_clock::now();
-        std::vector<int32_t> ready;
+        static std::vector<int32_t> ready;
+        ready.clear();
         for (auto& [id, entry] : coros)
                 if (now >= entry.resumeAt)
                         ready.push_back(id);
@@ -2615,7 +2634,7 @@ inline int32_t createWorker(const std::string& fnName, const std::string& input 
         return __cfxCreateWorker(fnName.c_str(), static_cast<uint32_t>(fnName.size()), input.c_str(), static_cast<uint32_t>(input.size()));
 }
 
-inline WorkerResult pollWorker(int32_t workerId, int32_t maxOutput = 65536)
+inline WorkerResult pollWorker(int32_t workerId, int32_t maxOutput = 4096)
 {
         WorkerResult result{ };
         std::string buf(static_cast<size_t>(maxOutput), '\0');

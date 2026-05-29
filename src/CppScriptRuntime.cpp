@@ -1,4 +1,4 @@
-#include "../include/CppScriptRuntime.h"
+#include "CppScriptRuntime.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -12,10 +12,12 @@
 
 #include <atomic>
 #include <cstdarg>
+#include <cstdlib>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <unordered_map>
 
 using namespace fx::cpp;
 
@@ -121,15 +123,15 @@ static constexpr size_t MAX_FUNC_TYPE_PARAMS = 16;
 
 static wasm_functype_t* MakeFuncType(std::initializer_list<wasm_valkind_t> params, std::initializer_list<wasm_valkind_t> results)
 {
+        if (params.size() > MAX_FUNC_TYPE_PARAMS || results.size() > MAX_FUNC_TYPE_PARAMS)
+                abort();
         wasm_valtype_t* pv[MAX_FUNC_TYPE_PARAMS];
         wasm_valtype_t* rv[MAX_FUNC_TYPE_PARAMS];
         size_t pi = 0, ri = 0;
         for (auto k : params)
-                if (pi < MAX_FUNC_TYPE_PARAMS)
-                        pv[pi++] = wasm_valtype_new(k);
+                pv[pi++] = wasm_valtype_new(k);
         for (auto k : results)
-                if (ri < MAX_FUNC_TYPE_PARAMS)
-                        rv[ri++] = wasm_valtype_new(k);
+                rv[ri++] = wasm_valtype_new(k);
         wasm_valtype_vec_t p_vec{ }, r_vec{ };
         wasm_valtype_vec_new(&p_vec, pi, pv);
         wasm_valtype_vec_new(&r_vec, ri, rv);
@@ -157,8 +159,8 @@ static inline uint32_t ArgU32(const wasmtime_val_t& v) { return static_cast<uint
 
 struct WasmMem
 {
-        uint8_t* base = nullptr;
-        size_t sz = 0;
+        uint8_t* base;
+        size_t sz;
 
         bool init(wasmtime_caller_t* caller)
         {
@@ -705,28 +707,46 @@ static wasm_trap_t* CbGetInstanceId(void* env, wasmtime_caller_t*, const wasmtim
 
 static bool HasWasmPermission(IScriptHost* host, const char* convarName, const std::string& resourceName)
 {
-        std::string allowed = GetConvar(host, convarName, "");
-        if (allowed.empty())
-                return false;
-        if (allowed == "*")
-                return true;
-        size_t pos = 0;
-        while (pos < allowed.size())
+        struct CacheEntry
         {
-                size_t end = allowed.find(',', pos);
-                if (end == std::string::npos)
-                        end = allowed.size();
-                size_t start = pos;
-                while (start < end && allowed[start] == ' ')
-                        ++start;
-                size_t last = end;
-                while (last > start && allowed[last - 1] == ' ')
-                        --last;
-                if (std::string_view(allowed.data() + start, last - start) == resourceName)
-                        return true;
-                pos = end + 1;
+                std::string raw;
+                std::unordered_set<std::string> allowed;
+                bool wildcard = false;
+        };
+        static std::mutex s_mu;
+        static std::unordered_map<std::string, CacheEntry> s_cache;
+        std::string current = GetConvar(host, convarName, "");
+        std::lock_guard<std::mutex> lk(s_mu);
+        auto& entry = s_cache[convarName];
+        if (entry.raw != current)
+        {
+                entry.raw = current;
+                entry.allowed.clear();
+                entry.wildcard = false;
+                size_t pos = 0;
+                while (pos < current.size())
+                {
+                        size_t end = current.find(',', pos);
+                        if (end == std::string::npos)
+                                end = current.size();
+                        size_t start = pos;
+                        while (start < end && current[start] == ' ')
+                                ++start;
+                        size_t last = end;
+                        while (last > start && current[last - 1] == ' ')
+                                --last;
+                        if (last > start)
+                        {
+                                std::string token(current.data() + start, last - start);
+                                if (token == "*")
+                                        entry.wildcard = true;
+                                else
+                                        entry.allowed.insert(std::move(token));
+                        }
+                        pos = end + 1;
+                }
         }
-        return false;
+        return entry.wildcard || entry.allowed.count(resourceName) > 0;
 }
 
 static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
@@ -774,6 +794,8 @@ static wasm_trap_t* CbGetLastSpawnExitCode(void* env, wasmtime_caller_t*, const 
 static wasm_trap_t* CbCreateWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbPollWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 static wasm_trap_t* CbScheduleBookmark(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbWorkerTrace(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbWorkerStub(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 
 struct ImportDesc
 {
@@ -781,30 +803,31 @@ struct ImportDesc
         std::initializer_list<wasm_valkind_t> params;
         std::initializer_list<wasm_valkind_t> results;
         wasmtime_func_callback_t hostCb;
+        wasmtime_func_callback_t workerCb;
 };
 
 static const ImportDesc g_imports[] = {
-        { "trace", { WASM_I32, WASM_I32 }, { }, CbTrace },
-        { "invoke_native", { WASM_I32 }, { }, CbInvokeNative },
-        { "copy_string_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyStringResult },
-        { "copy_binary_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyBinaryResult },
-        { "emit_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitEvent },
-        { "emit_net_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitNetEvent },
-        { "cancel_event", { }, { }, CbCancelEvent },
-        { "was_event_canceled", { }, { WASM_I32 }, CbWasEventCanceled },
-        { "get_resource_metadata", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbGetResourceMetadata },
-        { "get_num_resource_metadata", { WASM_I32, WASM_I32 }, { WASM_I32 }, CbGetNumResourceMetadata },
-        { "create_ref", { WASM_I32 }, { WASM_I32 }, CbCreateRef },
-        { "canonicalize_ref", { WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCanonicalizeRef },
-        { "remove_ref", { WASM_I32 }, { }, CbRemoveRef },
-        { "invoke_function_reference", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbInvokeFunctionReference },
-        { "get_instance_id", { }, { WASM_I32 }, CbGetInstanceId },
-        { "spawn_process", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbSpawnProcess },
-        { "get_last_spawn_exit_code", { }, { WASM_I32 }, CbGetLastSpawnExitCode },
-        { "create_worker", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCreateWorker },
-        { "poll_worker", { WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbPollWorker },
-        { "schedule_bookmark", { WASM_I32, WASM_I32 }, { }, CbScheduleBookmark },
-        { "is_manifest_version_v2_between", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbIsManifestVersionV2Between },
+        { "trace", { WASM_I32, WASM_I32 }, { }, CbTrace, CbWorkerTrace },
+        { "invoke_native", { WASM_I32 }, { }, CbInvokeNative, CbWorkerStub },
+        { "copy_string_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyStringResult, CbWorkerStub },
+        { "copy_binary_result", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCopyBinaryResult, CbWorkerStub },
+        { "emit_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitEvent, CbWorkerStub },
+        { "emit_net_event", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbEmitNetEvent, CbWorkerStub },
+        { "cancel_event", { }, { }, CbCancelEvent, CbWorkerStub },
+        { "was_event_canceled", { }, { WASM_I32 }, CbWasEventCanceled, CbWorkerStub },
+        { "get_resource_metadata", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbGetResourceMetadata, CbWorkerStub },
+        { "get_num_resource_metadata", { WASM_I32, WASM_I32 }, { WASM_I32 }, CbGetNumResourceMetadata, CbWorkerStub },
+        { "create_ref", { WASM_I32 }, { WASM_I32 }, CbCreateRef, CbWorkerStub },
+        { "canonicalize_ref", { WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCanonicalizeRef, CbWorkerStub },
+        { "remove_ref", { WASM_I32 }, { }, CbRemoveRef, CbWorkerStub },
+        { "invoke_function_reference", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbInvokeFunctionReference, CbWorkerStub },
+        { "get_instance_id", { }, { WASM_I32 }, CbGetInstanceId, CbWorkerStub },
+        { "spawn_process", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbSpawnProcess, CbWorkerStub },
+        { "get_last_spawn_exit_code", { }, { WASM_I32 }, CbGetLastSpawnExitCode, CbWorkerStub },
+        { "create_worker", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCreateWorker, CbWorkerStub },
+        { "poll_worker", { WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbPollWorker, CbWorkerStub },
+        { "schedule_bookmark", { WASM_I32, WASM_I32 }, { }, CbScheduleBookmark, CbWorkerStub },
+        { "is_manifest_version_v2_between", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbIsManifestVersionV2Between, CbWorkerStub },
 };
 
 static constexpr size_t NUM_IMPORTS = sizeof(g_imports) / sizeof(g_imports[0]);
@@ -859,6 +882,115 @@ static wasm_trap_t* CbWorkerStub(void*, wasmtime_caller_t*, const wasmtime_val_t
         return nullptr;
 }
 
+static void RunWorker(std::shared_ptr<CppScriptRuntime::WorkerState> state, wasmtime_module_t* mod, std::string fnName, std::vector<char> inputData)
+{
+        auto* eng = CppScriptRuntime::engine();
+        auto* store = wasmtime_store_new(eng, nullptr, nullptr);
+        wasmtime_store_limiter(store, WASM_MEMORY_LIMIT, -1, -1, -1, -1);
+        wasmtime_context_set_fuel(wasmtime_store_context(store), WASM_FUEL_AMOUNT);
+        auto* linker = wasmtime_linker_new(eng);
+        wasmtime_linker_allow_shadowing(linker, true);
+        if (auto* wasi_err = wasmtime_linker_define_wasi(linker))
+                wasmtime_error_delete(wasi_err);
+        wasi_config_t* wasi = wasi_config_new();
+        wasmtime_context_set_wasi(wasmtime_store_context(store), wasi);
+        auto** types = CachedImportFuncTypes();
+        for (size_t i = 0; i < NUM_IMPORTS; ++i)
+        {
+                const auto& imp = g_imports[i];
+                wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], imp.workerCb, nullptr, nullptr);
+        }
+        auto finalize = [&](CppScriptRuntime::WorkerState::Status s)
+        {
+                {
+                        std::lock_guard<std::mutex> lk(state->mutex);
+                        state->status = s;
+                }
+                wasmtime_linker_delete(linker);
+                wasmtime_store_delete(store);
+                wasmtime_module_delete(mod);
+        };
+        wasmtime_instance_t instance{ };
+        wasm_trap_t* trap = nullptr;
+        auto* err = wasmtime_linker_instantiate(linker, wasmtime_store_context(store), mod, &instance, &trap);
+        if (err || trap)
+        {
+                if (err) wasmtime_error_delete(err);
+                if (trap) wasm_trap_delete(trap);
+                finalize(CppScriptRuntime::WorkerState::Error);
+                return;
+        }
+        auto* storeCtx = wasmtime_store_context(store);
+        wasmtime_extern_t memExt{ };
+        bool hasMem = wasmtime_instance_export_get(storeCtx, &instance, "memory", 6, &memExt) && memExt.kind == WASMTIME_EXTERN_MEMORY;
+        wasmtime_extern_t allocExt{ };
+        bool hasAlloc = wasmtime_instance_export_get(storeCtx, &instance, "__cfx_alloc", 11, &allocExt) && allocExt.kind == WASMTIME_EXTERN_FUNC;
+        wasmtime_extern_t fnExt{ };
+        if (!wasmtime_instance_export_get(storeCtx, &instance, fnName.c_str(), fnName.size(), &fnExt) || fnExt.kind != WASMTIME_EXTERN_FUNC)
+        {
+                LogError("Worker export '%s' not found", fnName.c_str());
+                finalize(CppScriptRuntime::WorkerState::Error);
+                return;
+        }
+        auto workerAlloc = [&](uint32_t size) -> uint32_t
+        {
+                if (!hasAlloc)
+                        return 0;
+                wasmtime_val_t allocArgs[1] = { I32Val(static_cast<int32_t>(size)) };
+                wasmtime_val_t allocResult[1]{ };
+                if (!WasmCall(store, allocExt.of.func, allocArgs, 1, allocResult, 1, "worker", "__cfx_alloc"))
+                        return 0;
+                return static_cast<uint32_t>(allocResult[0].of.i32);
+        };
+        uint32_t inputPtr = 0;
+        if (!inputData.empty())
+        {
+                inputPtr = workerAlloc(static_cast<uint32_t>(inputData.size()));
+                if (inputPtr && hasMem)
+                {
+                        uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
+                        size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
+                        if (InBounds(wsz, inputPtr, inputData.size()))
+                                memcpy(wbase + inputPtr, inputData.data(), inputData.size());
+                }
+        }
+        constexpr uint32_t resultBufSize = WORKER_RESULT_BUF_SIZE;
+        uint32_t resultPtr = workerAlloc(resultBufSize);
+        wasmtime_val_t callArgs[4] = {
+                I32Val(static_cast<int32_t>(inputPtr)),
+                I32Val(static_cast<int32_t>(inputData.size())),
+                I32Val(static_cast<int32_t>(resultPtr)),
+                I32Val(static_cast<int32_t>(resultBufSize))
+        };
+        wasmtime_val_t callResult[1]{ };
+        trap = nullptr;
+        err = wasmtime_func_call(storeCtx, &fnExt.of.func, callArgs, 4, callResult, 1, &trap);
+        if (err || trap)
+        {
+                if (err) wasmtime_error_delete(err);
+                if (trap) wasm_trap_delete(trap);
+                finalize(CppScriptRuntime::WorkerState::Error);
+                return;
+        }
+        int32_t resultLen = callResult[0].of.i32;
+        if (resultLen > static_cast<int32_t>(resultBufSize))
+                resultLen = static_cast<int32_t>(resultBufSize);
+        {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                if (resultLen > 0 && hasMem)
+                {
+                        uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
+                        size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
+                        if (InBounds(wsz, resultPtr, static_cast<size_t>(resultLen)))
+                                state->result.assign(wbase + resultPtr, wbase + resultPtr + resultLen);
+                }
+                state->status = CppScriptRuntime::WorkerState::Done;
+        }
+        wasmtime_linker_delete(linker);
+        wasmtime_store_delete(store);
+        wasmtime_module_delete(mod);
+}
+
 static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
 {
         auto* rt = static_cast<CppScriptRuntime*>(env);
@@ -899,119 +1031,7 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
         wasmtime_module_t* mod = wasmtime_module_clone(rt->wasmModule());
         try
         {
-        state->thread = std::thread([state, mod, fnName, inputData = std::move(inputData)]()
-        {
-                auto* eng = CppScriptRuntime::engine();
-                auto* store = wasmtime_store_new(eng, nullptr, nullptr);
-                wasmtime_store_limiter(store, WASM_MEMORY_LIMIT, -1, -1, -1, -1);
-                wasmtime_context_set_fuel(wasmtime_store_context(store), WASM_FUEL_AMOUNT);
-                auto* linker = wasmtime_linker_new(eng);
-                wasmtime_linker_allow_shadowing(linker, true);
-                if (auto* wasi_err = wasmtime_linker_define_wasi(linker))
-                        wasmtime_error_delete(wasi_err);
-                wasi_config_t* wasi = wasi_config_new();
-                wasmtime_context_set_wasi(wasmtime_store_context(store), wasi);
-                auto** types = CachedImportFuncTypes();
-                for (size_t i = 0; i < NUM_IMPORTS; ++i)
-                {
-                        const auto& imp = g_imports[i];
-                        auto cb = (strcmp(imp.name, "trace") == 0) ? CbWorkerTrace : CbWorkerStub;
-                        wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], cb, nullptr, nullptr);
-                }
-                auto cleanup = [&](CppScriptRuntime::WorkerState::Status s = CppScriptRuntime::WorkerState::Error)
-                {
-                        std::lock_guard<std::mutex> lk(state->mutex);
-                        state->status = s;
-                        wasmtime_linker_delete(linker);
-                        wasmtime_store_delete(store);
-                        wasmtime_module_delete(mod);
-                };
-                wasmtime_instance_t instance{ };
-                wasm_trap_t* trap = nullptr;
-                auto* err = wasmtime_linker_instantiate(linker, wasmtime_store_context(store), mod, &instance, &trap);
-                if (err || trap)
-                {
-                        if (err) wasmtime_error_delete(err);
-                        if (trap) wasm_trap_delete(trap);
-                        cleanup();
-                        return;
-                }
-                auto* storeCtx = wasmtime_store_context(store);
-                wasmtime_extern_t memExt{ };
-                bool hasMem = wasmtime_instance_export_get(storeCtx, &instance, "memory", 6, &memExt) && memExt.kind == WASMTIME_EXTERN_MEMORY;
-                wasmtime_extern_t allocExt{ };
-                bool hasAlloc = wasmtime_instance_export_get(storeCtx, &instance, "__cfx_alloc", 11, &allocExt) && allocExt.kind == WASMTIME_EXTERN_FUNC;
-                wasmtime_extern_t fnExt{ };
-                if (!wasmtime_instance_export_get(storeCtx, &instance, fnName.c_str(), fnName.size(), &fnExt) || fnExt.kind != WASMTIME_EXTERN_FUNC)
-                {
-                        LogError("Worker export '%s' not found", fnName.c_str());
-                        cleanup();
-                        return;
-                }
-                auto workerAlloc = [&](uint32_t size) -> uint32_t
-                {
-                        if (!hasAlloc)
-                                return 0;
-                        wasmtime_val_t allocArgs[1] = { I32Val(static_cast<int32_t>(size)) };
-                        wasmtime_val_t allocResult[1]{ };
-                        if (!WasmCall(store, allocExt.of.func, allocArgs, 1, allocResult, 1, "worker", "__cfx_alloc"))
-                                return 0;
-                        return static_cast<uint32_t>(allocResult[0].of.i32);
-                };
-                uint32_t inputPtr = 0;
-                if (!inputData.empty())
-                {
-                        inputPtr = workerAlloc(static_cast<uint32_t>(inputData.size()));
-                        if (inputPtr && hasMem)
-                        {
-                                uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
-                                size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
-                                if (InBounds(wsz, inputPtr, inputData.size()))
-                                        memcpy(wbase + inputPtr, inputData.data(), inputData.size());
-                        }
-                }
-                constexpr uint32_t resultBufSize = WORKER_RESULT_BUF_SIZE;
-                uint32_t resultPtr = workerAlloc(resultBufSize);
-                wasmtime_val_t callArgs[4] = {
-                        I32Val(static_cast<int32_t>(inputPtr)),
-                        I32Val(static_cast<int32_t>(inputData.size())),
-                        I32Val(static_cast<int32_t>(resultPtr)),
-                        I32Val(static_cast<int32_t>(resultBufSize))
-                };
-                wasmtime_val_t callResult[1]{ };
-                trap = nullptr;
-                err = wasmtime_func_call(storeCtx, &fnExt.of.func, callArgs, 4, callResult, 1, &trap);
-                if (err || trap)
-                {
-                        if (err)
-                                wasmtime_error_delete(err);
-                        if (trap)
-                                wasm_trap_delete(trap);
-                        std::lock_guard<std::mutex> lk(state->mutex);
-                        state->status = CppScriptRuntime::WorkerState::Error;
-                        wasmtime_linker_delete(linker);
-                        wasmtime_store_delete(store);
-                        wasmtime_module_delete(mod);
-                        return;
-                }
-                int32_t resultLen = callResult[0].of.i32;
-                if (resultLen > static_cast<int32_t>(resultBufSize))
-                        resultLen = static_cast<int32_t>(resultBufSize);
-                {
-                        std::lock_guard<std::mutex> lk(state->mutex);
-                        if (resultLen > 0 && hasMem)
-                        {
-                                uint8_t* wbase = wasmtime_memory_data(storeCtx, &memExt.of.memory);
-                                size_t wsz = wasmtime_memory_data_size(storeCtx, &memExt.of.memory);
-                                if (InBounds(wsz, resultPtr, static_cast<size_t>(resultLen)))
-                                        state->result.assign(wbase + resultPtr, wbase + resultPtr + resultLen);
-                        }
-                        state->status = CppScriptRuntime::WorkerState::Done;
-                }
-                wasmtime_linker_delete(linker);
-                wasmtime_store_delete(store);
-                wasmtime_module_delete(mod);
-        });
+                state->thread = std::thread(RunWorker, state, mod, std::move(fnName), std::move(inputData));
         }
         catch (...)
         {
@@ -1431,6 +1451,7 @@ static struct OrphanedWorkerList
 
         std::mutex mutex;
         std::vector<Entry> entries;
+        std::atomic<bool> hasEntries{ false };
 
         ~OrphanedWorkerList()
         {
@@ -1442,6 +1463,8 @@ static struct OrphanedWorkerList
 
         void reap()
         {
+                if (!hasEntries.load(std::memory_order_relaxed))
+                        return;
                 std::lock_guard<std::mutex> lk(mutex);
                 auto it = entries.begin();
                 while (it != entries.end())
@@ -1459,12 +1482,14 @@ static struct OrphanedWorkerList
                         else
                                 ++it;
                 }
+                hasEntries.store(!entries.empty(), std::memory_order_relaxed);
         }
 
         void add(std::thread&& t, std::shared_ptr<CppScriptRuntime::WorkerState> s)
         {
                 std::lock_guard<std::mutex> lk(mutex);
                 entries.push_back({std::move(t), std::move(s)});
+                hasEntries.store(true, std::memory_order_relaxed);
         }
 } g_orphanedWorkers;
 
@@ -1525,9 +1550,16 @@ void CppScriptRuntime::destroyWasm()
                 wasmtime_store_delete(m_store);
                 m_store = nullptr;
         }
-        m_hasMemory = m_hasTickFn = m_hasEventFn = m_hasStopFn = false;
-        m_hasAllocFn = m_hasFreeFn = m_hasInvokeRefFn = false;
-        m_hasDuplicateRefFn = m_hasRemoveRefFn = m_hasHasPendingWorkFn = false;
+        m_hasMemory = false;
+        m_hasTickFn = false;
+        m_hasEventFn = false;
+        m_hasStopFn = false;
+        m_hasAllocFn = false;
+        m_hasFreeFn = false;
+        m_hasInvokeRefFn = false;
+        m_hasDuplicateRefFn = false;
+        m_hasRemoveRefFn = false;
+        m_hasHasPendingWorkFn = false;
         m_hasTickBookmarksFn = false;
 }
 
@@ -1597,6 +1629,7 @@ result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const
 
 result_t OM_DECL CppScriptRuntime::Tick()
 {
+        g_orphanedWorkers.reap();
         if (!m_hasTickFn)
                 return FX_S_OK;
         refuelWasm();

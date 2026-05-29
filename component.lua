@@ -1,7 +1,9 @@
 local cwd = os.getcwd()
 local wasmtime_dir = ("%s/vendor/wasmtime"):format(cwd)
 
-os.execute("tools/ext/wasmtime")
+if not os.isfile(("%s/lib/libwasmtime.a"):format(wasmtime_dir)) then
+        os.execute("tools/ext/wasmtime")
+end
 
 if not os.isfile(("%s/src/DB.h"):format(cwd)) then
         os.execute("python3 tools/native_db.py")
