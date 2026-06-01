@@ -1897,6 +1897,8 @@ inline void removeEventHandler(int32_t token)
                           return e.id == token;
                   }),
         vec.end());
+        if (vec.empty())
+                c->netSafeEvents.erase(event);
 }
 
 template<typename... TArgs>
@@ -2365,7 +2367,7 @@ namespace detail
         }
 }
 
-inline json::Value callExport(const std::string& resource, const std::string& name, std::initializer_list<json::Value> args = { })
+inline json::Value callExport(const std::string& resource, const std::string& name, const std::vector<json::Value>& args = { })
 {
         std::string cacheKey = resource + '/' + name;
         auto& cache = detail::exportRefCache();
@@ -2382,7 +2384,7 @@ inline json::Value callExport(const std::string& resource, const std::string& na
         }
         fxw_internal::Value argArr;
         argArr.kind = fxw_internal::Value::Kind::Array;
-        argArr.children.assign(args.begin(), args.end());
+        argArr.children = args;
         auto userPayload = fxw_internal::encode(argArr);
         auto retData = detail::invokeFunctionReference(exportRef, userPayload.data(), static_cast<uint32_t>(userPayload.size()));
         if (retData.empty())
