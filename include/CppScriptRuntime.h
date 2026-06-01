@@ -3047,6 +3047,18 @@ void __cfx_init()
                         __cfxGetResourceMetadata(k, sizeof(k) - 1, 0, s_ctx.resourceName.data(), len + 1);
                 }
         }
+        fx::on("onServerResourceStop", [](const std::string&, std::string resource)
+        {
+                std::string prefix = resource + '/';
+                auto& cache = fx::detail::exportRefCache();
+                for (auto it = cache.begin(); it != cache.end(); )
+                {
+                        if (it->first.compare(0, prefix.size(), prefix) == 0)
+                                it = cache.erase(it);
+                        else
+                                ++it;
+                }
+        });
         cfx_main();
 }
 
