@@ -872,7 +872,7 @@ static wasm_functype_t** CachedImportFuncTypes()
         return s_types;
 }
 
-static wasm_trap_t* CbWorkerTrace(void*, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
+static wasm_trap_t* CbWorkerTrace(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
 {
         WasmMem mem;
         if (!mem.init(caller))
@@ -886,7 +886,9 @@ static wasm_trap_t* CbWorkerTrace(void*, wasmtime_caller_t* caller, const wasmti
                 return nullptr;
         std::string msg = mem.readStr(ptr, len);
         SanitizeTraceMsg(msg);
-        fprintf(stderr, "[worker] %s", msg.c_str());
+        auto* state = static_cast<CppScriptRuntime::WorkerState*>(env);
+        const char* resName = (state && !state->resourceName.empty()) ? state->resourceName.c_str() : "?";
+        fprintf(stderr, "\033[36m[worker:%s]\033[0m %s", resName, msg.c_str());
         if (!msg.empty() && msg.back() != '\n')
                 fputc('\n', stderr);
         return nullptr;
@@ -915,7 +917,7 @@ static void RunWorker(std::shared_ptr<CppScriptRuntime::WorkerState> state, wasm
         for (size_t i = 0; i < NUM_IMPORTS; ++i)
         {
                 const auto& imp = g_imports[i];
-                wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], imp.workerCb, nullptr, nullptr);
+                wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], imp.workerCb, state.get(), nullptr);
         }
         auto finalize = [&](CppScriptRuntime::WorkerState::Status s)
         {
@@ -1045,6 +1047,7 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 return nullptr;
         }
         auto state = std::make_shared<CppScriptRuntime::WorkerState>();
+        state->resourceName = rt->resourceName();
         wasmtime_module_t* mod = wasmtime_module_clone(rt->wasmModule());
         try
         {

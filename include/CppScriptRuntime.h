@@ -3120,6 +3120,7 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
                 std::mutex mutex;
                 Status status = Running;
                 std::vector<char> result;
+                std::string resourceName;
         };
 
         static constexpr int32_t MAX_WORKERS_PER_RESOURCE = 8;
