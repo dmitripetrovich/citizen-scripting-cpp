@@ -229,24 +229,102 @@ struct Value
                 Object,
                 FuncRef
         } kind = Kind::Null;
-        std::string scalar; // String, FuncRef
-        double numVal = 0.0;
-        bool boolVal = false;
         bool isIntegral = false;
+        union
+        {
+                double numVal;
+                bool boolVal;
+                std::string scalar;
+        };
         std::vector<Value> children;
         std::vector<std::string> keys;
-        Value() = default;
-        Value(Value&&) noexcept = default;
-        Value& operator=(Value&&) noexcept = default;
-        Value(const Value&) = default;
-        Value& operator=(const Value&) = default;
-        Value(int v) : kind(Kind::Number), numVal(v), isIntegral(true) { }
+
+        bool hasString() const { return kind == Kind::String || kind == Kind::FuncRef || kind == Kind::Bin; }
+
+        Value() : numVal(0.0) { }
+        ~Value() { if (hasString()) scalar.~basic_string(); }
+
+        Value(const Value& o) : kind(o.kind), isIntegral(o.isIntegral), children(o.children), keys(o.keys)
+        {
+                if (o.hasString()) new (&scalar) std::string(o.scalar);
+                else if (o.kind == Kind::Bool) boolVal = o.boolVal;
+                else numVal = o.numVal;
+        }
+
+        Value& operator=(const Value& o)
+        {
+                if (this != &o)
+                {
+                        if (hasString() && o.hasString())
+                                scalar = o.scalar;
+                        else
+                        {
+                                if (hasString()) scalar.~basic_string();
+                                if (o.hasString()) new (&scalar) std::string(o.scalar);
+                                else if (o.kind == Kind::Bool) boolVal = o.boolVal;
+                                else numVal = o.numVal;
+                        }
+                        kind = o.kind;
+                        isIntegral = o.isIntegral;
+                        children = o.children;
+                        keys = o.keys;
+                }
+                return *this;
+        }
+
+        Value(Value&& o) noexcept : kind(o.kind), isIntegral(o.isIntegral), children(std::move(o.children)), keys(std::move(o.keys))
+        {
+                if (o.hasString())
+                {
+                        new (&scalar) std::string(std::move(o.scalar));
+                        o.scalar.~basic_string();
+                        o.numVal = 0.0;
+                        o.kind = Kind::Null;
+                }
+                else if (o.kind == Kind::Bool) boolVal = o.boolVal;
+                else numVal = o.numVal;
+        }
+
+        Value& operator=(Value&& o) noexcept
+        {
+                if (this != &o)
+                {
+                        Kind newKind = o.kind;
+                        bool newIntegral = o.isIntegral;
+                        if (hasString()) scalar.~basic_string();
+                        if (o.hasString())
+                        {
+                                new (&scalar) std::string(std::move(o.scalar));
+                                o.scalar.~basic_string();
+                                o.numVal = 0.0;
+                                o.kind = Kind::Null;
+                        }
+                        else if (newKind == Kind::Bool) boolVal = o.boolVal;
+                        else numVal = o.numVal;
+                        kind = newKind;
+                        isIntegral = newIntegral;
+                        children = std::move(o.children);
+                        keys = std::move(o.keys);
+                }
+                return *this;
+        }
+
+        Value(int v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true) { }
         Value(int64_t v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true) { }
         Value(double v) : kind(Kind::Number), numVal(v) { }
         Value(float v) : kind(Kind::Number), numVal(static_cast<double>(v)) { }
         Value(bool b) : kind(Kind::Bool), boolVal(b) { }
-        Value(const char* s) : kind(s ? Kind::String : Kind::Null), scalar(s ? s : "") { }
+        Value(const char* s) : kind(s ? Kind::String : Kind::Null)
+        {
+                if (s) new (&scalar) std::string(s);
+                else numVal = 0.0;
+        }
         Value(std::string s) : kind(Kind::String), scalar(std::move(s)) { }
+
+        void initScalar(std::string s)
+        {
+                new (&scalar) std::string(std::move(s));
+        }
 
         std::string asStr(std::string_view def = "") const
         {
@@ -400,7 +478,7 @@ struct Reader
                         {
                                 Value v;
                                 v.kind = Value::Kind::FuncRef;
-                                v.scalar = val.asStr();
+                                v.initScalar(val.asStr());
                                 return v;
                         }
                         Value v;
@@ -428,7 +506,7 @@ struct Reader
                 {
                         Value v;
                         v.kind = Value::Kind::FuncRef;
-                        v.scalar = str(n);
+                        v.initScalar(str(n));
                         return v;
                 }
                 if (n > static_cast<size_t>(end - p))
@@ -464,7 +542,7 @@ struct Reader
                 if ((b & 0xE0) == 0xA0)
                 {
                         v.kind = Value::Kind::String;
-                        v.scalar = str(b & 0x1F);
+                        v.initScalar(str(b & 0x1F));
                         return v;
                 }
                 if ((b & 0xF0) == 0x90)
@@ -492,37 +570,37 @@ struct Reader
                         case 0xC4:
                         {
                                 v.kind = Value::Kind::Bin;
-                                v.scalar = str(u8());
+                                v.initScalar(str(u8()));
                                 return v;
                         }
                         case 0xC5:
                         {
                                 v.kind = Value::Kind::Bin;
-                                v.scalar = str(u16());
+                                v.initScalar(str(u16()));
                                 return v;
                         }
                         case 0xC6:
                         {
                                 v.kind = Value::Kind::Bin;
-                                v.scalar = str(u32());
+                                v.initScalar(str(u32()));
                                 return v;
                         }
                         case 0xD9:
                         {
                                 v.kind = Value::Kind::String;
-                                v.scalar = str(u8());
+                                v.initScalar(str(u8()));
                                 return v;
                         }
                         case 0xDA:
                         {
                                 v.kind = Value::Kind::String;
-                                v.scalar = str(u16());
+                                v.initScalar(str(u16()));
                                 return v;
                         }
                         case 0xDB:
                         {
                                 v.kind = Value::Kind::String;
-                                v.scalar = str(u32());
+                                v.initScalar(str(u32()));
                                 return v;
                         }
                         case 0xCC:
@@ -1050,7 +1128,7 @@ namespace detail
                         if (c == '"')
                         {
                                 v.kind = Value::Kind::String;
-                                v.scalar = parseString();
+                                v.initScalar(parseString());
                         }
                         else if (c == '{')
                         {
@@ -2377,7 +2455,7 @@ inline void addExport(const std::string& name, ExportHandler handler)
                         return;
                 fxw_internal::Value refVal;
                 refVal.kind = fxw_internal::Value::Kind::FuncRef;
-                refVal.scalar = exportRef;
+                refVal.initScalar(exportRef);
                 auto payload = fxw_internal::encode(fxw_internal::Value::array({ std::move(refVal) }));
                 detail::invokeFunctionReference(setterRef, payload.data(), static_cast<uint32_t>(payload.size()));
         });
@@ -2408,7 +2486,7 @@ namespace detail
                         return { };
                 fxw_internal::Value setterVal;
                 setterVal.kind = fxw_internal::Value::Kind::FuncRef;
-                setterVal.scalar = setterRefStr;
+                setterVal.initScalar(setterRefStr);
                 auto setterPayload = fxw_internal::encode(fxw_internal::Value::array({ std::move(setterVal) }));
                 std::string eventName = "__cfx_export_" + resource + "_" + name;
                 __cfxEmitEvent(eventName.c_str(), static_cast<uint32_t>(eventName.size()), setterPayload.data(), static_cast<uint32_t>(setterPayload.size()));
@@ -2473,7 +2551,7 @@ inline void onCommand(const std::string& command, CommandHandler h)
                         auto it = ctx->commands.find(command);
                         if (it != ctx->commands.end())
                                 for (auto& handler : it->second)
-                                        safeInvoke([&] { handler(source, cmdArgs); }, ctx->resourceName.c_str(), "command handler");
+                                        fxw_internal::safeInvoke([&] { handler(source, cmdArgs); }, ctx->resourceName.c_str(), "command handler");
                 }
                 return { MSGPACK_EMPTY_ARRAY };
         });
