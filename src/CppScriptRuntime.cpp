@@ -729,24 +729,11 @@ static bool HasWasmPermission(IScriptHost* host, const char* convarName, const s
                 std::unordered_set<std::string> allowed;
                 bool wildcard = false;
         };
-        struct CacheKey
-        {
-                IScriptHost* host;
-                std::string convar;
-                bool operator==(const CacheKey& o) const { return host == o.host && convar == o.convar; }
-        };
-        struct CacheKeyHash
-        {
-                size_t operator()(const CacheKey& k) const
-                {
-                        return std::hash<void*>{}(k.host) ^ (std::hash<std::string>{}(k.convar) << 1);
-                }
-        };
         static std::mutex s_mu;
-        static std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> s_cache;
+        static std::unordered_map<std::string, CacheEntry> s_cache;
         std::string current = GetConvar(host, convarName, "");
         std::lock_guard<std::mutex> lk(s_mu);
-        auto& entry = s_cache[CacheKey{ host, convarName }];
+        auto& entry = s_cache[convarName];
         if (entry.raw != current)
         {
                 entry.raw = current;
