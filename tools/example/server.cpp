@@ -61,8 +61,8 @@ Server
                 if (args.size() == 0)
                         return "unknown";
                 std::string src = std::to_string(args.get<int>(0));
-                std::string name = fx::natives::cfx::GetPlayerName(src.c_str());
-                int ping = fx::natives::cfx::GetPlayerPing(src.c_str());
+                std::string name = fx::native<std::string>("GET_PLAYER_NAME", src.c_str());
+                int ping = fx::native<int>("GET_PLAYER_PING", src.c_str());
                 return name + " (ping=" + std::to_string(ping) + "ms)";
         });
 

@@ -1995,6 +1995,12 @@ inline TResult invoke(uint64_t hash, TArgs&&... args)
 namespace fx
 {
 
+template<typename TResult = void, typename... TArgs>
+inline TResult native(const char* name, TArgs&&... args)
+{
+        return fx::natives::invoke<TResult>(HashString(name), std::forward<TArgs>(args)...);
+}
+
 template<typename F>
 inline int32_t on(const std::string& event, F&& handler)
 {
