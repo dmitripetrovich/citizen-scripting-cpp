@@ -2382,7 +2382,16 @@ inline json::Value callExport(const std::string& resource, const std::string& na
         if (retData.empty())
         {
                 cache.erase(cacheKey);
-                return { };
+                exportRef = detail::resolveExportRef(resource, name);
+                if (exportRef.empty())
+                        return { };
+                cache.emplace(cacheKey, exportRef);
+                retData = detail::invokeFunctionReference(exportRef, userPayload.data(), static_cast<uint32_t>(userPayload.size()));
+                if (retData.empty())
+                {
+                        cache.erase(cacheKey);
+                        return { };
+                }
         }
         auto result = fxw_internal::decode(retData.data(), static_cast<uint32_t>(retData.size()));
         if (result.kind == fxw_internal::Value::Kind::Array && result.size() > 0)
