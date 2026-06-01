@@ -1369,11 +1369,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
         };
         wasmtime_val_t ret{ };
         if (!WasmCall(m_store, m_fnInvokeRef, a, 5, &ret, 1, m_resourceName.c_str(), "invoke_ref trap"))
-        {
-                wasmFree(argsPtr, argsAllocSz);
-                wasmFree(resultPtr, resultBufMax);
                 return false;
-        }
         int32_t actualLen = ret.of.i32;
         if (actualLen > 0 && static_cast<uint32_t>(actualLen) > resultBufMax && static_cast<uint32_t>(actualLen) <= MAX_REF_RESULT_SIZE)
         {
@@ -1391,11 +1387,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
                 a[4] = I32Val(static_cast<int32_t>(resultBufMax));
                 wasmtime_val_t ret2{ };
                 if (!WasmCall(m_store, m_fnInvokeRef, a, 5, &ret2, 1, m_resourceName.c_str(), "invoke_ref trap"))
-                {
-                        wasmFree(argsPtr, argsAllocSz);
-                        wasmFree(resultPtr, resultBufMax);
                         return false;
-                }
                 actualLen = ret2.of.i32;
         }
         wasmFree(argsPtr, argsAllocSz);
