@@ -1194,6 +1194,69 @@ inline Value parse(std::string_view json)
         return v;
 }
 
+inline void stringifyTo(std::string& out, const Value& v)
+{
+        switch (v.kind)
+        {
+                case Value::Kind::Null:
+                        out += "null";
+                        break;
+                case Value::Kind::Bool:
+                        out += v.boolVal ? "true" : "false";
+                        break;
+                case Value::Kind::Number:
+                        if (v.isIntegral)
+                        {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(static_cast<int64_t>(v.numVal)));
+                                out += buf;
+                        }
+                        else
+                        {
+                                char buf[64];
+                                snprintf(buf, sizeof(buf), "%.17g", v.numVal);
+                                out += buf;
+                        }
+                        break;
+                case Value::Kind::String:
+                case Value::Kind::FuncRef:
+                        out += quote(v.scalar);
+                        break;
+                case Value::Kind::Bin:
+                        out += "null";
+                        break;
+                case Value::Kind::Array:
+                        out += '[';
+                        for (size_t i = 0; i < v.children.size(); ++i)
+                        {
+                                if (i > 0)
+                                        out += ',';
+                                stringifyTo(out, v.children[i]);
+                        }
+                        out += ']';
+                        break;
+                case Value::Kind::Object:
+                        out += '{';
+                        for (size_t i = 0; i < v.keys.size(); ++i)
+                        {
+                                if (i > 0)
+                                        out += ',';
+                                out += quote(v.keys[i]);
+                                out += ':';
+                                stringifyTo(out, v.children[i]);
+                        }
+                        out += '}';
+                        break;
+        }
+}
+
+inline std::string stringify(const Value& v)
+{
+        std::string out;
+        stringifyTo(out, v);
+        return out;
+}
+
 }
 
 namespace fx
