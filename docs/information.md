@@ -1,6 +1,6 @@
 # Information for citizen-scripting-cpp
 
-[citizen-scripting-cpp](https://github.com/bd53/citizen-scripting-cpp) lets you write resources in C++, compiled as WebAssembly modules (`.wasm`).
+[citizen-scripting-cpp](https://github.com/ivanbytchkov/citizen-scripting-cpp) lets you write resources in C++, compiled as WebAssembly modules (`.wasm`).
 
 It provides:
 1. Near native performance via wasmtime
