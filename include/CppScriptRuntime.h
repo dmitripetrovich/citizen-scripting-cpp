@@ -936,7 +936,7 @@ public:
         JsonObj& set(std::string_view key, double value)
         {
                 char buf[32];
-                snprintf(buf, sizeof(buf), "%g", value);
+                snprintf(buf, sizeof(buf), "%.17g", value);
                 append(key, buf);
                 return *this;
         }
@@ -1256,8 +1256,14 @@ namespace detail
                                 {
                                         hasDot = true;
                                         ++pos;
+                                        size_t fracStart = pos;
                                         while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
                                                 ++pos;
+                                        if (pos == fracStart)
+                                        {
+                                                error = true;
+                                                return { };
+                                        }
                                 }
                                 if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E'))
                                 {
@@ -1265,8 +1271,14 @@ namespace detail
                                         ++pos;
                                         if (pos < src.size() && (src[pos] == '+' || src[pos] == '-'))
                                                 ++pos;
+                                        size_t expStart = pos;
                                         while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
                                                 ++pos;
+                                        if (pos == expStart)
+                                        {
+                                                error = true;
+                                                return { };
+                                        }
                                 }
                                 if (pos == start)
                                 {
