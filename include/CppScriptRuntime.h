@@ -377,7 +377,7 @@ struct Value
                 return i < children.size() ? children[i] : nullValue();
         }
 
-        bool has(const std::string& key) const
+        bool has(std::string_view key) const
         {
                 for (size_t i = 0; i < keys.size(); ++i)
                         if (keys[i] == key)
@@ -385,7 +385,7 @@ struct Value
                 return false;
         }
 
-        const Value& operator[](const std::string& key) const
+        const Value& operator[](std::string_view key) const
         {
                 for (size_t i = 0; i < keys.size(); ++i)
                         if (keys[i] == key)
@@ -1601,7 +1601,7 @@ struct EventHandlerEntry
 struct Context
 {
         std::string resourceName;
-        std::unordered_map<int32_t, fx::TickHandler> ticks;
+        std::unordered_map<int32_t, std::shared_ptr<fx::TickHandler>> ticks;
         std::unordered_map<int32_t, fx::StopHandler> stops;
         int32_t nextTickId = 1;
         int32_t nextStopId = 1;
@@ -1616,6 +1616,7 @@ struct Context
         std::unordered_map<int32_t, fx::HttpCallback> httpCallbacks;
         bool httpResponseRegistered = false;
         std::vector<int32_t> dispatchExpired; // scratch for dispatchTick
+        std::vector<std::shared_ptr<fx::TickHandler>> tickSnapshot; // scratch for dispatchTick
 
         int32_t addTimer(uint32_t ms, uint32_t intervalMs, std::function<void()> cb)
         {
@@ -1656,12 +1657,13 @@ struct Context
                         snprintf(timerCtx, sizeof(timerCtx), "timer %d", id);
                         safeInvoke(cb, resourceName.c_str(), timerCtx);
                 }
-                std::vector<fx::TickHandler> snapshot;
-                snapshot.reserve(ticks.size());
+                tickSnapshot.clear();
+                tickSnapshot.reserve(ticks.size());
                 for (auto& [id, h] : ticks)
-                        snapshot.push_back(h);
-                for (auto& h : snapshot)
-                        safeInvoke(h, resourceName.c_str(), "tick handler");
+                        tickSnapshot.push_back(h);
+                for (auto& h : tickSnapshot)
+                        safeInvoke(*h, resourceName.c_str(), "tick handler");
+                tickSnapshot.clear();
         }
 
         void dispatchStop()
@@ -2234,7 +2236,7 @@ inline int32_t onTick(TickHandler h)
         int32_t id = fx::allocateId(c->nextTickId, c->ticks);
         if (id < 0)
                 return -1;
-        c->ticks[id] = std::move(h);
+        c->ticks[id] = std::make_shared<fx::TickHandler>(std::move(h));
         return id;
 }
 
