@@ -2905,54 +2905,47 @@ struct Wait
         void await_resume() const noexcept { }
 };
 
+namespace detail
+{
+        template<typename F>
+        inline void createCoroutineImpl(F&& fn, bool resumeNow)
+        {
+                auto* c = fxw_internal::currentContext();
+                if (!c)
+                        return;
+                auto& coros = fxw_internal::coroutines();
+                if (coros.size() >= fxw_internal::MAX_COROUTINES)
+                {
+                        fprintf(stderr, "[script:%s] coroutine limit (%zu) reached, dropping new thread\n", c->resourceName.c_str(), fxw_internal::MAX_COROUTINES);
+                        return;
+                }
+                auto stored = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
+                auto task = (*stored)();
+                auto& nextId = fxw_internal::nextCoroutineId();
+                int32_t id = fx::allocateId(nextId, coros);
+                if (id < 0)
+                {
+                        fprintf(stderr, "[script:%s] no free coroutine id, dropping new thread\n", c->resourceName.c_str());
+                        return;
+                }
+                coros[id] = { task.handle, std::move(stored), std::chrono::steady_clock::now() };
+                if (resumeNow)
+                        fxw_internal::resumeCoroutineById(id);
+                else
+                        __cfxScheduleBookmark(id, 0);
+        }
+}
+
 template<typename F>
 inline void createCoroutine(F&& fn)
 {
-        auto* c = fxw_internal::currentContext();
-        if (!c)
-                return;
-        auto& coros = fxw_internal::coroutines();
-        if (coros.size() >= fxw_internal::MAX_COROUTINES)
-        {
-                fprintf(stderr, "[script:%s] coroutine limit (%zu) reached, dropping new thread\n", c->resourceName.c_str(), fxw_internal::MAX_COROUTINES);
-                return;
-        }
-        auto stored = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
-        auto task = (*stored)();
-        auto& nextId = fxw_internal::nextCoroutineId();
-        int32_t id = fx::allocateId(nextId, coros);
-        if (id < 0)
-        {
-                fprintf(stderr, "[script:%s] no free coroutine id, dropping new thread\n", c->resourceName.c_str());
-                return;
-        }
-        coros[id] = { task.handle, std::move(stored), std::chrono::steady_clock::now() };
-        __cfxScheduleBookmark(id, 0);
+        detail::createCoroutineImpl(std::forward<F>(fn), false);
 }
 
 template<typename F>
 inline void createCoroutineNow(F&& fn)
 {
-        auto* c = fxw_internal::currentContext();
-        if (!c)
-                return;
-        auto& coros = fxw_internal::coroutines();
-        if (coros.size() >= fxw_internal::MAX_COROUTINES)
-        {
-                fprintf(stderr, "[script:%s] coroutine limit (%zu) reached, dropping new thread\n", c->resourceName.c_str(), fxw_internal::MAX_COROUTINES);
-                return;
-        }
-        auto stored = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
-        auto task = (*stored)();
-        auto& nextId = fxw_internal::nextCoroutineId();
-        int32_t id = fx::allocateId(nextId, coros);
-        if (id < 0)
-        {
-                fprintf(stderr, "[script:%s] no free coroutine id, dropping new thread\n", c->resourceName.c_str());
-                return;
-        }
-        coros[id] = { task.handle, std::move(stored), std::chrono::steady_clock::now() };
-        fxw_internal::resumeCoroutineById(id);
+        detail::createCoroutineImpl(std::forward<F>(fn), true);
 }
 
 template<typename F>
