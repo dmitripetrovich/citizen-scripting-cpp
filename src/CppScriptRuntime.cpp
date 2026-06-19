@@ -369,7 +369,8 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
                 else
                         wctx.args[i] = static_cast<uint64_t>(hostCtx.arguments[i]);
         }
-        mem.init(caller);
+        if (!mem.init(caller))
+                return nullptr;
         if (!mem.check(ctxPtr, sizeof(WasmNativeCtx)))
                 return nullptr;
         memcpy(mem.base + ctxPtr, &wctx, sizeof(WasmNativeCtx));
@@ -693,13 +694,19 @@ static wasm_trap_t* CbInvokeFunctionReference(void* env, wasmtime_caller_t* call
                 if (!dataPtr)
                         dataLen = 0;
         }
-        mem.init(caller);
+        if (!mem.init(caller))
+        {
+                if (dataPtr)
+                        rt->wasmFree(dataPtr, dataLen);
+                return nullptr;
+        }
         if (dataPtr && dataLen && mem.check(dataPtr, dataLen))
                 memcpy(mem.base + dataPtr, retBuf->GetBytes(), dataLen);
         else if (dataPtr)
         {
                 rt->wasmFree(dataPtr, dataLen);
-                mem.init(caller);
+                if (!mem.init(caller))
+                        return nullptr;
                 dataPtr = 0;
                 dataLen = 0;
         }
