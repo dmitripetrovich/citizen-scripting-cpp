@@ -297,7 +297,17 @@ class OMClass : public TInterfaces...
 template<typename TClass, typename... TArg>
 inline OMPtr<TClass> MakeNew(TArg&&... args)
 {
-        TClass* inst = new (fwAlloc(sizeof(TClass))) TClass(std::forward<TArg>(args)...);
+        void* mem = fwAlloc(sizeof(TClass));
+        TClass* inst;
+        try
+        {
+                inst = new (mem) TClass(std::forward<TArg>(args)...);
+        }
+        catch (...)
+        {
+                fwFree(mem);
+                throw;
+        }
         OMPtr<TClass> ret(inst);
         return ret;
 }
@@ -305,7 +315,17 @@ inline OMPtr<TClass> MakeNew(TArg&&... args)
 template<typename TClass, typename... TArg>
 inline fxIBase* MakeNewBase(TArg&&... args)
 {
-        TClass* inst = new (fwAlloc(sizeof(TClass))) TClass(std::forward<TArg>(args)...);
+        void* mem = fwAlloc(sizeof(TClass));
+        TClass* inst;
+        try
+        {
+                inst = new (mem) TClass(std::forward<TArg>(args)...);
+        }
+        catch (...)
+        {
+                fwFree(mem);
+                throw;
+        }
         inst->AddRef();
         return inst->GetBaseRef();
 }
