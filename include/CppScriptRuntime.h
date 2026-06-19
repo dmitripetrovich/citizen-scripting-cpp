@@ -2869,8 +2869,7 @@ inline void resumeCoroutines()
         if (coros.empty())
                 return;
         auto now = std::chrono::steady_clock::now();
-        static std::vector<int32_t> ready;
-        ready.clear();
+        std::vector<int32_t> ready;
         for (auto& [id, entry] : coros)
                 if (now >= entry.resumeAt)
                         ready.push_back(id);
