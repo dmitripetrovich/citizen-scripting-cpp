@@ -2,7 +2,7 @@ fx_version 'cerulean'
 game 'gta5'
 
 name 'example'
-author 'ivanbytchkov'
+author 'dmitripetrovich'
 description 'Example C++ resource.'
 version '1.0.0'
 

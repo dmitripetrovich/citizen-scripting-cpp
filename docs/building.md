@@ -8,7 +8,7 @@ To build the runtime plugin on Linux you need the following dependencies:
 Then clone:
 
 ```bash
-git clone https://github.com/ivanbytchkov/citizen-scripting-cpp.git
+git clone https://github.com/dmitripetrovich/citizen-scripting-cpp.git
 cd citizen-scripting-cpp
 ```
 
