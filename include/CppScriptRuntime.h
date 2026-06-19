@@ -1645,17 +1645,20 @@ struct Context
                         auto it = timers.find(id);
                         if (it == timers.end())
                                 continue;
-                        auto cb = it->second.callback;
+                        char timerCtx[32];
+                        snprintf(timerCtx, sizeof(timerCtx), "timer %d", id);
                         if (it->second.intervalMs > 0)
                         {
                                 auto next = it->second.nextFire + std::chrono::milliseconds(it->second.intervalMs);
                                 it->second.nextFire = (next > now) ? next : now;
+                                safeInvoke(it->second.callback, resourceName.c_str(), timerCtx);
                         }
                         else
+                        {
+                                auto cb = std::move(it->second.callback);
                                 timers.erase(it);
-                        char timerCtx[32];
-                        snprintf(timerCtx, sizeof(timerCtx), "timer %d", id);
-                        safeInvoke(cb, resourceName.c_str(), timerCtx);
+                                safeInvoke(cb, resourceName.c_str(), timerCtx);
+                        }
                 }
                 tickSnapshot.clear();
                 tickSnapshot.reserve(ticks.size());
