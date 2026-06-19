@@ -2575,16 +2575,17 @@ inline void callExportAsync(const std::string& resource, const std::string& name
                 if (asyncRetval.kind == fxw_internal::Value::Kind::FuncRef)
                 {
                         std::string asyncRef = asyncRetval.scalar;
-                        std::string cbRef = detail::createCanonicalRef([cb = std::move(callback)](const uint8_t* data, uint32_t size) -> std::vector<uint8_t>
+                        auto shared_cb = std::make_shared<std::function<void(json::Value)>>(std::move(callback));
+                        std::string cbRef = detail::createCanonicalRef([shared_cb](const uint8_t* data, uint32_t size) -> std::vector<uint8_t>
                 {
                         auto decoded = fxw_internal::decode(data, size);
                         fxw_internal::ensureArray(decoded);
-                        cb(decoded.size() > 0 ? decoded.at(0) : json::makeNull());
+                        (*shared_cb)(decoded.size() > 0 ? decoded.at(0) : json::makeNull());
                         return { MSGPACK_EMPTY_ARRAY };
                 });
                         if (cbRef.empty())
                         {
-                                callback(json::makeNull());
+                                (*shared_cb)(json::makeNull());
                                 return;
                         }
                         fxw_internal::Value cbVal;
