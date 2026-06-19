@@ -1010,11 +1010,8 @@ static void RunWorker(std::shared_ptr<CppScriptRuntime::WorkerState> state, wasm
                         if (InBounds(wsz, resultPtr, static_cast<size_t>(resultLen)))
                                 state->result.assign(wbase + resultPtr, wbase + resultPtr + resultLen);
                 }
-                state->status = CppScriptRuntime::WorkerState::Done;
         }
-        wasmtime_linker_delete(linker);
-        wasmtime_store_delete(store);
-        wasmtime_module_delete(mod);
+        finalize(CppScriptRuntime::WorkerState::Done);
 }
 
 static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
