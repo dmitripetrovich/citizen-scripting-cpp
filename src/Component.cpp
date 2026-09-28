@@ -1,8 +1,11 @@
 /*
- * Copyright (c) 2017-2020 the CitizenFX Collective
+ * Copyright (c) 2023 Take-Two Interactive Software, Inc.
  *
- * ext/LICENSES/LGPL-2.0.txt
- * https://github.com/citizenfx/fivem/blob/master/code/components/citizen-scripting-{core,lua,mono-v2,mono,node,v8}/src/Component.cpp
+ * This file is licensed under the GNU Library General Public License, version 2.0 (LGPL-2.0).
+ *
+ * The full license text is available at: LICENSES/LGPL-2.0.txt
+ *
+ * Original source: https://github.com/citizenfx/fivem/blob/master/code/components/citizen-scripting-{core,lua,mono-v2,mono,node,v8}/src/Component.cpp
  */
 
 #include "CppScriptRuntime.h"
