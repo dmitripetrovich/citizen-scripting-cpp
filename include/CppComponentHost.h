@@ -549,9 +549,10 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
                 {
                         kill(pid, SIGTERM);
                         auto termDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-                        while (waitpid(pid, &wstatus, WNOHANG) == 0 && std::chrono::steady_clock::now() < termDeadline)
+                        pid_t wr;
+                        while ((wr = waitpid(pid, &wstatus, WNOHANG)) == 0 && std::chrono::steady_clock::now() < termDeadline)
                                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                        if (waitpid(pid, &wstatus, WNOHANG) == 0)
+                        if (wr == 0)
                                 kill(pid, SIGKILL);
                 }
                 waitpid(pid, &wstatus, 0);
