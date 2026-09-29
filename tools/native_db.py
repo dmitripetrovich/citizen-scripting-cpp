@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
+import hashlib
 import json
 import os
 import sys
+import time
 import urllib.request
 from collections import defaultdict
+
+CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
+CACHE_TTL = 3600
 
 CFX_URL = "https://runtime.fivem.net/doc/natives_cfx.json"
 GAME_URLS = {
@@ -135,11 +140,22 @@ def generate_namespace_block(namespace: str, natives: list[dict]) -> tuple[str, 
         return block, len(wrappers)
 
 
-def fetch_json(url: str):
+def fetch_json(url: str, no_cache: bool = False):
+        cache_file = os.path.join(CACHE_DIR, hashlib.sha1(url.encode()).hexdigest() + ".json")
+        if not no_cache and os.path.exists(cache_file):
+                age = time.time() - os.path.getmtime(cache_file)
+                if age < CACHE_TTL:
+                        print(f"Using cached {url} ({int(age)}s old)")
+                        with open(cache_file) as f:
+                                return json.load(f)
         print(f"Fetching {url}...")
         req = urllib.request.Request(url, headers={"User-Agent": "citizen-scripting-cpp-nativedb"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read())
+                data = resp.read()
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(cache_file, "wb") as f:
+                f.write(data)
+        return json.loads(data)
 
 
 def parse_cfx_natives(data: list | dict) -> dict[str, list[dict]]:
@@ -185,19 +201,21 @@ def main():
         parser = argparse.ArgumentParser()
         parser.add_argument("--game", choices=GAME_URLS.keys(), default="fivem")
         parser.add_argument("--output", default="src/DB.h")
+        parser.add_argument("--no-cache", action="store_true")
         args = parser.parse_args()
         output_path = args.output
         game = args.game
+        no_cache = args.no_cache
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         all_ns: dict[str, list[dict]] = {}
         try:
-                cfx_data = fetch_json(CFX_URL)
+                cfx_data = fetch_json(CFX_URL, no_cache)
                 for ns, natives in parse_cfx_natives(cfx_data).items():
                         all_ns.setdefault(ns, []).extend(natives)
         except Exception as e:
                 print(f"Failed to fetch CFX natives: {e}")
         try:
-                game_data = fetch_json(GAME_URLS[game])
+                game_data = fetch_json(GAME_URLS[game], no_cache)
                 for ns, natives in parse_game_natives(game_data).items():
                         all_ns.setdefault(ns, []).extend(natives)
         except Exception as e:
