@@ -102,9 +102,6 @@ def generate_wrapper(native: dict) -> str | None:
         for p in params:
                 ptype = p.get("type", "int")
                 pname = to_safe_param(p.get("name", "p"))
-                if ptype == "Vector3*":
-                        skip = True
-                        break
                 if ptype not in PARAM_TYPE_MAP:
                         skip = True
                         break
@@ -138,7 +135,7 @@ def generate_namespace_block(namespace: str, natives: list[dict]) -> tuple[str, 
         return block, len(wrappers)
 
 
-def fetch_json(url: str) -> any:
+def fetch_json(url: str):
         print(f"Fetching {url}...")
         req = urllib.request.Request(url, headers={"User-Agent": "citizen-scripting-cpp-nativedb"})
         with urllib.request.urlopen(req, timeout=30) as resp:
