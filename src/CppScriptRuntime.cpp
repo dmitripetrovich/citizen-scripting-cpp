@@ -232,7 +232,7 @@ static bool WasmCall(wasmtime_store_t* store, const wasmtime_func_t& fn, const w
         if (err || trap)
         {
                 auto msg = ExtractWasmError(err, trap);
-                fprintf(stderr, "\033[31m[%s] %s:\033[0m %s\n", resourceName, label, msg.c_str());
+                LogError("[%s] %s: %s", resourceName, label, msg.c_str());
                 return false;
         }
         return true;
@@ -1036,7 +1036,7 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 results[0] = I32Val(-1);
                 return nullptr;
         }
-        if (static_cast<int32_t>(rt->m_workers.size()) >= CppScriptRuntime::MAX_WORKERS_PER_RESOURCE)
+        if (rt->m_workers.size() >= static_cast<size_t>(CppScriptRuntime::MAX_WORKERS_PER_RESOURCE))
         {
                 LogError("Resource '%s' exceeded max worker limit (%d)", rt->resourceName().c_str(), CppScriptRuntime::MAX_WORKERS_PER_RESOURCE);
                 results[0] = I32Val(-3);
@@ -1984,7 +1984,7 @@ result_t OM_DECL CppScriptRuntime::EmitWarning(char* channel, char* message)
                 std::string msg = std::string("[warning:") + ch + "] " + message + "\n";
                 if (m_host.GetRef())
                         m_host->ScriptTrace(Mut(msg));
-                fprintf(stderr, "[script:%s] %s", m_resourceName.c_str(), msg.c_str());
+                LogWarning("[script:%s] %s", m_resourceName.c_str(), msg.c_str());
         }
         return FX_S_OK;
 }
