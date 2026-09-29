@@ -1741,8 +1741,7 @@ result_t OM_DECL CppScriptRuntime::TickBookmarks(uint64_t* bookmarks, int32_t nu
         BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
         wasmtime_val_t args[2] = { I32Val(static_cast<int32_t>(arrPtr)), I32Val(static_cast<int32_t>(wasmIds.size())) };
         bool ok = WasmCall(m_store, m_fnTickBookmarks, args, 2, nullptr, 0, m_resourceName.c_str(), "tick_bookmarks trap");
-        if (ok)
-                wasmFree(arrPtr, arrSize);
+        wasmFree(arrPtr, arrSize);
         return FX_S_OK;
 }
 
@@ -1793,8 +1792,7 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
                 std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in event '" + eventName + "'^7\n";
                 m_host->ScriptTrace(Mut(msg));
         }
-        if (eventOk)
-                wasmFree(block, totalSz);
+        wasmFree(block, totalSz);
         return FX_S_OK;
 }
 
