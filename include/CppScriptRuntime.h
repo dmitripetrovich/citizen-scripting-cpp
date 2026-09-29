@@ -238,8 +238,16 @@ struct Value
         };
         std::vector<Value> children;
         std::vector<std::string> keys;
+        mutable std::unique_ptr<std::unordered_map<std::string_view, size_t>> m_keyIndex;
 
         bool hasString() const { return kind == Kind::String || kind == Kind::FuncRef || kind == Kind::Bin; }
+
+        void buildKeyIndex() const
+        {
+                m_keyIndex = std::make_unique<std::unordered_map<std::string_view, size_t>>();
+                for (size_t i = 0; i < keys.size(); ++i)
+                        m_keyIndex->emplace(std::string_view(keys[i]), i);
+        }
 
         Value() : numVal(0.0) { }
         ~Value() { if (hasString()) scalar.~basic_string(); }
@@ -268,6 +276,7 @@ struct Value
                         isIntegral = o.isIntegral;
                         children = o.children;
                         keys = o.keys;
+                        m_keyIndex.reset();
                 }
                 return *this;
         }
@@ -305,6 +314,7 @@ struct Value
                         isIntegral = newIntegral;
                         children = std::move(o.children);
                         keys = std::move(o.keys);
+                        m_keyIndex.reset();
                 }
                 return *this;
         }
@@ -379,17 +389,22 @@ struct Value
 
         bool has(std::string_view key) const
         {
-                for (size_t i = 0; i < keys.size(); ++i)
-                        if (keys[i] == key)
-                                return true;
-                return false;
+                if (keys.empty())
+                        return false;
+                if (!m_keyIndex)
+                        buildKeyIndex();
+                return m_keyIndex->count(key) > 0;
         }
 
         const Value& operator[](std::string_view key) const
         {
-                for (size_t i = 0; i < keys.size(); ++i)
-                        if (keys[i] == key)
-                                return children[i];
+                if (keys.empty())
+                        return nullValue();
+                if (!m_keyIndex)
+                        buildKeyIndex();
+                auto it = m_keyIndex->find(key);
+                if (it != m_keyIndex->end() && it->second < children.size())
+                        return children[it->second];
                 return nullValue();
         }
 
