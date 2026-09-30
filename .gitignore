@@ -1,4 +1,5 @@
 build/
-src/DB.h
+src/natives
+src/sdk.blob
 tools/.cache
 vendor/wasmtime

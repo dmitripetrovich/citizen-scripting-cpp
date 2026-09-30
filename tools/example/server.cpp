@@ -1,4 +1,5 @@
 #include <include/CppScriptRuntime.h>
+#include <src/natives/cfx.h>
 #include <cstdlib>
 #include <memory>
 #include <unordered_map>
@@ -34,6 +35,7 @@ Server
                         pending->erase(it);
                 std::string id = extractId(source);
                 (*players)[id] = name;
+                // typed wrapper from src/natives/cfx.h
                 std::string license = fx::natives::cfx::GetPlayerIdentifierByType(id.c_str(), "license2");
                 fx::trace("%s [%s] (%s) has connected. Players Online: %zu\n", name.c_str(), license.c_str(), id.c_str(), players->size());
         });
@@ -62,6 +64,7 @@ Server
                 if (args.size() == 0)
                         return "unknown";
                 std::string src = std::to_string(args.get<int>(0));
+                // string-based alternative (works without native includes)
                 std::string name = fx::native<std::string>("GET_PLAYER_NAME", src.c_str());
                 int ping = fx::native<int>("GET_PLAYER_PING", src.c_str());
                 return name + " (ping=" + std::to_string(ping) + "ms)";

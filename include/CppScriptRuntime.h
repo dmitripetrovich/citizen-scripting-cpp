@@ -3165,8 +3165,6 @@ void __cfx_init()
 
 #define Server void cfx_main()
 
-#include "../src/DB.h"
-
 #else
 
 #include "CppComponentHost.h"

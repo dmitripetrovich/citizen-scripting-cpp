@@ -6,4 +6,4 @@ author 'dmitripetrovich'
 description 'Example C++ resource.'
 version '1.0.0'
 
-server_script 'server.wasm'
+server_script 'server.cpp'

@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import struct
 import sys
 import time
 import urllib.request
@@ -126,7 +127,7 @@ def generate_wrapper(native: dict) -> str | None:
         return f"        inline {cpp_ret} {func_name}({param_str})\n        {{\n                {body}\n        }}"
 
 
-def generate_namespace_block(namespace: str, natives: list[dict]) -> tuple[str, int] | None:
+def generate_namespace_block(namespace: str, natives: list[dict]) -> tuple[str, str, int] | None:
         wrappers = []
         for n in sorted(natives, key=lambda x: x.get("name", "")):
                 w = generate_wrapper(n)
@@ -137,7 +138,7 @@ def generate_namespace_block(namespace: str, natives: list[dict]) -> tuple[str, 
         body = "\n\n".join(wrappers)
         ns_lower = namespace.lower()
         block = f"namespace {ns_lower}\n{{\n\n{body}\n\n}} // namespace {ns_lower}"
-        return block, len(wrappers)
+        return ns_lower, block, len(wrappers)
 
 
 def fetch_json(url: str, no_cache: bool = False):
@@ -196,17 +197,37 @@ def parse_game_natives(data: dict) -> dict[str, list[dict]]:
         return dict(by_ns)
 
 
+def embed_sdk(base_dir, output):
+        files = ["include/CppScriptRuntime.h"]
+        native_dir = os.path.join(base_dir, "src", "natives")
+        if os.path.isdir(native_dir):
+                for f in sorted(os.listdir(native_dir)):
+                        if f.endswith(".h"):
+                                files.append(f"src/natives/{f}")
+        blob = struct.pack("<I", len(files))
+        for rel_path in files:
+                with open(os.path.join(base_dir, rel_path), "rb") as f:
+                        data = f.read()
+                path_bytes = rel_path.encode("utf-8")
+                blob += struct.pack("<I", len(path_bytes)) + path_bytes
+                blob += struct.pack("<I", len(data)) + data
+        with open(output, "wb") as f:
+                f.write(blob)
+        print(f"Embedded {len(files)} SDK files ({len(blob)} bytes) into {output}")
+
+
 def main():
         import argparse
         parser = argparse.ArgumentParser()
         parser.add_argument("--game", choices=GAME_URLS.keys(), default="fivem")
-        parser.add_argument("--output", default="src/DB.h")
+        parser.add_argument("--output", default="src/natives")
+        parser.add_argument("--embed", default="src/sdk.blob")
         parser.add_argument("--no-cache", action="store_true")
         args = parser.parse_args()
-        output_path = args.output
+        output_dir = args.output
         game = args.game
         no_cache = args.no_cache
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
         all_ns: dict[str, list[dict]] = {}
         try:
                 cfx_data = fetch_json(CFX_URL, no_cache)
@@ -239,33 +260,44 @@ def main():
         for ns in all_ns:
                 all_ns[ns] = [n for n in all_ns[ns]
                                 if not n.get("name") or global_seen.get((n["name"], param_sig(n)), (None,))[0] == ns]
-        blocks = []
+        files = []
         total_count = 0
         for ns in sorted(all_ns.keys()):
                 natives = all_ns[ns]
                 result = generate_namespace_block(ns, natives)
                 if not result:
                         continue
-                block, count = result
+                ns_lower, block, count = result
                 total_count += count
-                blocks.append((ns, block, count))
-                print(f"  {ns}: {count} wrappers")
-
-        body = "\n\n".join(block for _, block, _ in blocks)
-        header = f"""// Auto-generated, do not edit.
+                filename = ns_lower.replace(" ", "_") + ".h"
+                files.append((filename, ns_lower, count))
+                file_content = f"""// Auto-generated, do not edit.
 #pragma once
 
 namespace fx::natives
 {{
 
-{body}
+{block}
 
 }} // namespace fx::natives
 """
-        with open(output_path, "w") as f:
-                f.write(header)
-        print(f"\nGenerated {total_count} wrappers across {len(blocks)} namespaces")
-        print(f"Output: {output_path}")
+                with open(os.path.join(output_dir, filename), "w") as f:
+                        f.write(file_content)
+                print(f"  {ns}: {count} wrappers -> {filename}")
+
+        includes = "\n".join(f'#include "{fn}"' for fn, _, _ in files)
+        all_content = f"""// Auto-generated, do not edit.
+#pragma once
+
+{includes}
+"""
+        with open(os.path.join(output_dir, "all.h"), "w") as f:
+                f.write(all_content)
+        print(f"\nGenerated {total_count} wrappers across {len(files)} namespaces")
+        print(f"Output: {output_dir}/")
+
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        embed_sdk(base_dir, args.embed)
 
 
 if __name__ == "__main__":

@@ -10,15 +10,17 @@ It provides:
 ### How it works
 
 The runtime plugin (`libcitizen-scripting-cpp.so`) is loaded by FXServer and handles the lifecycle:
-1. Author builds `server.cpp` to `server.wasm` with `tools/ext/build` (see [building.md](./building.md))
-2. Server reads `fxmanifest.lua` -> sees `server_script 'server.wasm'`
-3. Wasmtime loads the module and calls `__cfx_init`
-4. `Server { }` block runs and it registers events, exports, timers, etc.
-5. Runtime dispatches ticks, events, and ref calls to your handlers
-6. On resource stop, `onStop` handlers run and everything is cleaned up
+1. Author writes `server.cpp` and references it in `fxmanifest.lua` (see [building.md](./building.md))
+2. Server reads `fxmanifest.lua` -> sees `server_script 'server.cpp'`
+3. Runtime compiles `server.cpp` to `server.wasm` automatically (cached until source changes)
+4. Wasmtime loads the module and calls `__cfx_init`
+5. `Server { }` block runs and it registers events, exports, timers, etc.
+6. Runtime dispatches ticks, events, and ref calls to your handlers
+7. On resource stop, `onStop` handlers run and everything is cleaned up
 
 ### Notes
 
+- Resources are compiled automatically on load; [Zig](https://ziglang.org/) must be available (or pre-compile with `tools/ext/build`).
 - Resources are sandboxed, they can only interact with the server through the defined host imports.
 - Child process spawning requires `set sv_wasmChildProcess "resource-name"` (or `"*"` for all) in .cfg.
 - Worker threads require `set sv_wasmWorkerThreads "resource-name"` (or `"*"` for all) in .cfg.

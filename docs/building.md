@@ -22,7 +22,7 @@ make -C build -f citizen-scripting-cpp.make config=release \
   -j$(nproc)
 ```
 
-`premake5` will automatically fetch wasmtime and generate `src/DB.h` on first run.
+`premake5` will automatically fetch wasmtime and generate `src/natives/` on first run.
 
 ### Install runtime
 
@@ -30,14 +30,12 @@ Copy `build/bin/Release/libcitizen-scripting-cpp.so` next to your FXServer binar
 
 ### Writing a resource
 
-Build your resource with `tools/ext/build`:
-
-```bash
-tools/ext/build path/to/server.cpp # writes path/to/server.wasm
-```
-
-Reference the built `.wasm` in your manifest:
+Reference `.cpp` files directly in your manifest, the runtime compiles them automatically:
 
 ```lua
-server_script 'server.wasm'
+server_script 'server.cpp'
 ```
+
+The compiled `.wasm` is cached next to the source and only rebuilt when the `.cpp` changes.
+
+You can also pre-compile with `tools/ext/build` and use `.wasm` directly if preferred.

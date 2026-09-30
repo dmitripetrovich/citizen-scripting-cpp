@@ -66,19 +66,21 @@ static std::string GetConvar(IScriptHost* host, const char* name, const char* de
         return result ? std::string(result) : std::string(defaultValue);
 }
 
-enum class LogLevel { Warning, Error };
+enum class LogLevel { Info, Warning, Error };
 
 __attribute__((format(printf, 2, 3)))
 static void Log(LogLevel level, const char* fmt, ...)
 {
         va_list ap;
         va_start(ap, fmt);
-        fprintf(stderr, "%s[citizen-scripting-cpp]\033[0m ", level == LogLevel::Error ? "\033[31m" : "\033[33m");
+        const char* color = level == LogLevel::Error ? "\033[31m" : level == LogLevel::Warning ? "\033[33m" : "\033[36m";
+        fprintf(stderr, "%s[citizen-scripting-cpp]\033[0m ", color);
         vfprintf(stderr, fmt, ap);
         fputc('\n', stderr);
         va_end(ap);
 }
 
+#define LogInfo(...) Log(LogLevel::Info, __VA_ARGS__)
 #define LogError(...) Log(LogLevel::Error, __VA_ARGS__)
 #define LogWarning(...) Log(LogLevel::Warning, __VA_ARGS__)
 
@@ -1862,9 +1864,129 @@ int32_t OM_DECL CppScriptRuntime::HandlesFile(char* scriptFile, IScriptHostWithR
         if (!scriptFile)
                 return 0;
         std::string_view file(scriptFile);
-        if (file.ends_with(".wasm"))
+        if (file.ends_with(".wasm") || file.ends_with(".cpp"))
                 return 1;
         return 0;
+}
+
+__asm__(
+        ".section .rodata\n"
+        ".global g_sdkBlob\n"
+        ".global g_sdkBlobEnd\n"
+        "g_sdkBlob:\n"
+        ".incbin \"../src/sdk.blob\"\n"
+        "g_sdkBlobEnd:\n"
+        ".text\n"
+);
+extern "C" const unsigned char g_sdkBlob[];
+extern "C" const unsigned char g_sdkBlobEnd[];
+
+static bool fileExists(const std::string& path)
+{
+        struct stat st;
+        return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static bool isNewer(const std::string& a, const std::string& b)
+{
+        struct stat sa, sb;
+        if (stat(a.c_str(), &sa) != 0 || stat(b.c_str(), &sb) != 0)
+                return false;
+        if (sa.st_mtim.tv_sec != sb.st_mtim.tv_sec)
+                return sa.st_mtim.tv_sec > sb.st_mtim.tv_sec;
+        return sa.st_mtim.tv_nsec > sb.st_mtim.tv_nsec;
+}
+
+static bool extractSdk(const std::string& dir)
+{
+        const unsigned char* p = g_sdkBlob;
+        const unsigned char* end = g_sdkBlobEnd;
+        if (end - p < 4)
+                return false;
+        uint32_t count;
+        memcpy(&count, p, 4);
+        p += 4;
+        for (uint32_t i = 0; i < count; i++)
+        {
+                if (end - p < 4) return false;
+                uint32_t pathLen;
+                memcpy(&pathLen, p, 4);
+                p += 4;
+                if (static_cast<size_t>(end - p) < pathLen) return false;
+                std::string relPath(reinterpret_cast<const char*>(p), pathLen);
+                p += pathLen;
+                if (end - p < 4) return false;
+                uint32_t dataLen;
+                memcpy(&dataLen, p, 4);
+                p += 4;
+                if (static_cast<size_t>(end - p) < dataLen) return false;
+                std::string fullPath = dir + "/" + relPath;
+                auto slash = fullPath.rfind('/');
+                if (slash != std::string::npos)
+                {
+                        std::string parent = fullPath.substr(0, slash);
+                        mkdir(parent.c_str(), 0755);
+                        auto slash2 = parent.rfind('/');
+                        if (slash2 != std::string::npos)
+                                mkdir(parent.substr(0, slash2).c_str(), 0755);
+                }
+                FILE* f = fopen(fullPath.c_str(), "wb");
+                if (!f)
+                {
+                        // try creating parent dirs from root
+                        std::string path;
+                        for (size_t j = 0; j < fullPath.size(); j++)
+                        {
+                                path += fullPath[j];
+                                if (fullPath[j] == '/' && j > 0)
+                                        mkdir(path.c_str(), 0755);
+                        }
+                        f = fopen(fullPath.c_str(), "wb");
+                        if (!f) return false;
+                }
+                fwrite(p, 1, dataLen, f);
+                fclose(f);
+                p += dataLen;
+        }
+        return true;
+}
+
+static std::string getSdkPath()
+{
+        static std::string s_sdkPath;
+        static bool s_extracted = false;
+        if (s_extracted)
+                return s_sdkPath;
+        s_extracted = true;
+        char tmpl[] = "/tmp/citizen-scripting-cpp-sdk-XXXXXX";
+        char* dir = mkdtemp(tmpl);
+        if (!dir)
+                return { };
+        s_sdkPath = dir;
+        if (!extractSdk(s_sdkPath))
+        {
+                s_sdkPath.clear();
+                return { };
+        }
+        return s_sdkPath;
+}
+
+static bool compileCpp(const std::string& cppPath, const std::string& wasmPath, const std::string& sdkPath, const std::string& resourceName)
+{
+        std::string cmd = "zig c++ -target wasm32-wasi -std=c++23 -O2 -fno-exceptions -mexec-model=reactor -Wl,--export-memory";
+        cmd += " -I\"" + sdkPath + "\"";
+        cmd += " \"" + cppPath + "\"";
+        cmd += " -o \"" + wasmPath + "\"";
+        cmd += " 2>&1";
+        auto result = fx::spawnProcess(cmd, 1048576, 60000);
+        if (result.status != 0)
+        {
+                LogError("Failed to compile '%s' in resource '%s' (exit %d):\n%s", cppPath.c_str(), resourceName.c_str(), result.status, result.output.c_str());
+                return false;
+        }
+        if (!result.output.empty())
+                LogInfo("[%s] %s", resourceName.c_str(), result.output.c_str());
+        return true;
 }
 
 static bool ReadFileBytes(const std::string& path, const std::string& resolvedRoot, std::vector<uint8_t>& out)
@@ -1931,18 +2053,35 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                 return FX_E_INVALIDARG;
         m_scriptFile = scriptFile;
         std::string_view file(scriptFile);
-        if (file.ends_with(".wasm"))
+        std::string wasmFile = resolvedPath;
+        if (file.ends_with(".cpp"))
         {
-                std::vector<uint8_t> wasmBytes;
-                if (!ReadFileBytes(resolvedPath, resolvedRoot, wasmBytes))
+                std::string sdkPath = getSdkPath();
+                if (sdkPath.empty())
                 {
-                        LogError("Failed to read '%s'", resolvedPath.c_str());
+                        LogError("Failed to extract embedded SDK for compilation");
                         return FX_E_INVALIDARG;
                 }
-                return loadWasm(wasmBytes, resolvedPath);
+                wasmFile = resolvedPath.substr(0, resolvedPath.size() - 4) + ".wasm";
+                if (!fileExists(wasmFile) || isNewer(resolvedPath, wasmFile))
+                {
+                        LogInfo("Compiling '%s' in resource '%s'...", scriptFile, m_resourceName.c_str());
+                        if (!compileCpp(resolvedPath, wasmFile, sdkPath, m_resourceName))
+                                return FX_E_INVALIDARG;
+                }
         }
-        LogError("Unsupported file type for '%s' in resource '%s'", scriptFile, m_resourceName.c_str());
-        return FX_E_INVALIDARG;
+        else if (!file.ends_with(".wasm"))
+        {
+                LogError("Unsupported file type for '%s' in resource '%s'", scriptFile, m_resourceName.c_str());
+                return FX_E_INVALIDARG;
+        }
+        std::vector<uint8_t> wasmBytes;
+        if (!ReadFileBytes(wasmFile, resolvedRoot, wasmBytes))
+        {
+                LogError("Failed to read '%s'", wasmFile.c_str());
+                return FX_E_INVALIDARG;
+        }
+        return loadWasm(wasmBytes, wasmFile);
 }
 
 result_t OM_DECL CppScriptRuntime::WalkStack(char*, uint32_t, char*, uint32_t, IScriptStackWalkVisitor* visitor)
